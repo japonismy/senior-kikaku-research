@@ -57,12 +57,39 @@ Created: 2026-06-05
 - YouTubeリンク
 - 公開日
 - 更新日
+- サムネ分析
 
 DLファイル名:
 
 ```text
 {video_id}_{タイトル先頭20文字}.csv
 {video_id}_{タイトル先頭20文字}_thumbnail.jpg
+```
+
+## 保守バッチ
+
+上位100件の高解像度サムネ取得、Geminiサムネ分析、データ再生成:
+
+```powershell
+python run_maintenance_batch.py --limit 100
+```
+
+YouTubeメタデータ更新も含める場合:
+
+```powershell
+python run_maintenance_batch.py --limit 100 --update-youtube
+```
+
+GitHub Pagesへ反映する場合:
+
+```powershell
+python run_maintenance_batch.py --limit 100 --deploy
+```
+
+既存データだけ再生成・pushする場合:
+
+```powershell
+python deploy_pages.py
 ```
 
 ## サムネ文字の補正

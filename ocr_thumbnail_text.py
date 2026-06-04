@@ -25,13 +25,23 @@ ASSET_DIR = HERE / "thumbnail_assets"
 WORK_DIR = HERE / "ocr_work"
 OVERRIDE_PATH = HERE / "thumbnail_text_overrides.csv"
 REPORT_PATH = HERE / "reports" / "thumbnail_ocr_batch.csv"
+ANALYSIS_PATH = HERE / "thumbnail_analysis_overrides.jsonl"
 
-PROMPT = """You are reading Japanese text embedded in a YouTube thumbnail.
+PROMPT = """You are analyzing a Japanese YouTube thumbnail for planning research.
 Return only JSON.
 
 Schema:
 {
   "thumbnail_text": "all visible Japanese thumbnail text, preserving the main phrases",
+  "main_subject": "main people/objects in Japanese",
+  "people": "people count and attributes in Japanese",
+  "setting": "place/background in Japanese",
+  "composition": "short composition description in Japanese",
+  "emotion_appeal": "main emotional appeal in Japanese",
+  "story_hook": "what story expectation this thumbnail creates in Japanese",
+  "pattern_tags": ["short Japanese tags for plot/appeal patterns"],
+  "visual_tags": ["short Japanese tags for visible subjects/settings"],
+  "search_tags": ["short Japanese search tags useful for planning"],
   "confidence": 0.0,
   "notes": "short note if unreadable"
 }
@@ -40,6 +50,8 @@ Rules:
 - Do not include the YouTube video title unless it is visibly written on the thumbnail.
 - If no readable text exists, use an empty string.
 - Keep only text visible in the image.
+- Tags should be concise, searchable Japanese nouns/phrases.
+- Avoid generic tags like 感動 unless it is visually or textually central.
 """
 
 
@@ -56,6 +68,7 @@ def main() -> int:
     if args.engine == "gemini":
         client, model_id = load_client()
     overrides = read_overrides()
+    analyses = read_analysis()
     videos = load_videos()
     targets = [
         v for v in videos
@@ -75,6 +88,7 @@ def main() -> int:
             text = clean_text(data.get("thumbnail_text", ""))
             if text:
                 overrides[video_id] = {"thumbnail_text": text, "note": "gemini_ocr"}
+                analyses[video_id] = normalize_analysis(video, data)
                 ok += 1
             else:
                 ng += 1
@@ -86,6 +100,7 @@ def main() -> int:
         time.sleep(args.sleep)
 
     write_overrides(overrides)
+    write_analysis(analyses)
     write_report(rows)
     print(json.dumps({"processed": processed, "ok_text": ok, "empty_or_ng": ng, "report": str(REPORT_PATH)}, ensure_ascii=False))
     return 0
@@ -162,12 +177,33 @@ def read_overrides() -> dict[str, dict[str, str]]:
     return out
 
 
+def read_analysis() -> dict[str, dict]:
+    out = {}
+    if not ANALYSIS_PATH.exists():
+        return out
+    with ANALYSIS_PATH.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            vid = row.get("video_id")
+            if vid:
+                out[vid] = row
+    return out
+
+
 def write_overrides(rows: dict[str, dict[str, str]]) -> None:
     with OVERRIDE_PATH.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=["video_id", "thumbnail_text", "note"])
         writer.writeheader()
         for vid in sorted(rows):
             writer.writerow({"video_id": vid, **rows[vid]})
+
+
+def write_analysis(rows: dict[str, dict]) -> None:
+    with ANALYSIS_PATH.open("w", encoding="utf-8") as f:
+        for vid in sorted(rows):
+            f.write(json.dumps(rows[vid], ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
 def write_report(rows: list[dict]) -> None:
@@ -188,6 +224,31 @@ def report_row(video: dict, text: str, confidence: object, notes: str, error: st
         "confidence": confidence,
         "notes": notes,
         "error": error,
+    }
+
+
+def normalize_analysis(video: dict, data: dict) -> dict:
+    def as_list(value):
+        if isinstance(value, list):
+            return [clean_text(x) for x in value if clean_text(x)]
+        if isinstance(value, str) and value.strip():
+            return [clean_text(x) for x in re.split(r"[,、/／]", value) if clean_text(x)]
+        return []
+
+    return {
+        "video_id": video.get("video_id", ""),
+        "thumbnail_text": clean_text(data.get("thumbnail_text", "")),
+        "main_subject": clean_text(data.get("main_subject", "")),
+        "people": clean_text(data.get("people", "")),
+        "setting": clean_text(data.get("setting", "")),
+        "composition": clean_text(data.get("composition", "")),
+        "emotion_appeal": clean_text(data.get("emotion_appeal", "")),
+        "story_hook": clean_text(data.get("story_hook", "")),
+        "pattern_tags": as_list(data.get("pattern_tags", [])),
+        "visual_tags": as_list(data.get("visual_tags", [])),
+        "search_tags": as_list(data.get("search_tags", [])),
+        "confidence": data.get("confidence", ""),
+        "notes": clean_text(data.get("notes", "")),
     }
 
 

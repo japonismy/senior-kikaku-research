@@ -237,6 +237,10 @@
           <div class="text" id="detailScriptText"></div>
         </div>
         <div class="block">
+          <h3>サムネ分析</h3>
+          <div class="text" id="detailThumbnailAnalysis"></div>
+        </div>
+        <div class="block">
           <h3>タグ</h3>
           <div class="badges" id="detailTags"></div>
         </div>
@@ -357,6 +361,7 @@
       ].map(x => `<div>${x}</div>`).join("");
       document.getElementById("detailThumbnailText").textContent = v.thumbnail_text || "未整備";
       document.getElementById("detailScriptText").textContent = t ? t.digest + (t.chars > t.digest.length ? `\n\n... (${fmt.format(t.chars)}文字中、冒頭${fmt.format(t.digest.length)}文字)` : "") : "未取得";
+      document.getElementById("detailThumbnailAnalysis").textContent = formatThumbnailAnalysis(v.thumbnail_analysis);
       document.getElementById("detailTags").innerHTML = (v.tags || []).slice(0, 80).map(x => `<span class="badge">${escapeHtml(x)}</span>`).join("");
       document.getElementById("downloadCsvBtn").onclick = () => downloadCsv(v, t);
       document.getElementById("downloadThumbnailBtn").onclick = () => downloadThumbnail(v);
@@ -411,6 +416,19 @@
     function formatDateTime(value) {
       if (!value) return "";
       return String(value).replace("T", " ").replace("Z", "").slice(0, 19);
+    }
+
+    function formatThumbnailAnalysis(a) {
+      if (!a) return "未整備";
+      const rows = [
+        ["主役", a.main_subject],
+        ["人物", a.people],
+        ["舞台", a.setting],
+        ["構図", a.composition],
+        ["感情訴求", a.emotion_appeal],
+        ["フック", a.story_hook],
+      ].filter(([, value]) => value);
+      return rows.length ? rows.map(([k, v]) => `${k}: ${v}`).join("\n") : "未整備";
     }
 
     function downloadBaseName(v) {

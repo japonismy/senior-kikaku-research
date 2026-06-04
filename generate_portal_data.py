@@ -13,6 +13,7 @@ DB_PATH = ANALYSIS_DIR / "competitor_db.sqlite"
 DATA_DIR = HERE / "data"
 REPORT_DIR = HERE / "reports"
 OVERRIDE_PATH = HERE / "thumbnail_text_overrides.csv"
+ANALYSIS_OVERRIDE_PATH = HERE / "thumbnail_analysis_overrides.jsonl"
 
 TRANSCRIPT_DIGEST_CHARS = 1600
 
@@ -54,6 +55,7 @@ def main() -> int:
         )
     }
     thumbnail_text.update(read_thumbnail_overrides(OVERRIDE_PATH))
+    analysis_map = read_analysis_overrides(ANALYSIS_OVERRIDE_PATH)
     tag_map: dict[str, list[str]] = {}
     for r in con.execute(
         """
@@ -88,6 +90,10 @@ def main() -> int:
         vid = r["video_id"]
         raw_tags = parse_tags(r["tags"])
         analysis_tags = unique(tag_map.get(vid, []))
+        thumb_analysis = analysis_map.get(vid, {})
+        generated_tags = []
+        for key in ["pattern_tags", "visual_tags", "search_tags"]:
+            generated_tags.extend(thumb_analysis.get(key, []))
         item = {
             "video_id": vid,
             "channel_id": r["channel_id"],
@@ -107,8 +113,16 @@ def main() -> int:
             ],
             "youtube_url": f"https://www.youtube.com/watch?v={vid}",
             "fetched_at": r["fetched_at"] or "",
-            "thumbnail_text": thumbnail_text.get(vid, ""),
-            "tags": unique(raw_tags + analysis_tags),
+            "thumbnail_text": thumbnail_text.get(vid, "") or thumb_analysis.get("thumbnail_text", ""),
+            "thumbnail_analysis": {
+                "main_subject": thumb_analysis.get("main_subject", ""),
+                "people": thumb_analysis.get("people", ""),
+                "setting": thumb_analysis.get("setting", ""),
+                "composition": thumb_analysis.get("composition", ""),
+                "emotion_appeal": thumb_analysis.get("emotion_appeal", ""),
+                "story_hook": thumb_analysis.get("story_hook", ""),
+            },
+            "tags": unique(raw_tags + analysis_tags + generated_tags),
         }
         if not item["thumbnail_text"]:
             missing.append(
@@ -244,6 +258,21 @@ def read_thumbnail_overrides(path: Path) -> dict[str, str]:
             text = compact_text(row.get("thumbnail_text", ""))
             if video_id and text:
                 out[video_id] = text
+    return out
+
+
+def read_analysis_overrides(path: Path) -> dict[str, dict]:
+    out = {}
+    if not path.exists():
+        return out
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            video_id = compact_text(row.get("video_id", ""))
+            if video_id:
+                out[video_id] = row
     return out
 
 

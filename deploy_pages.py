@@ -19,7 +19,7 @@ def run(cmd: list[str]) -> None:
 
 def main() -> int:
     run(["python", "generate_portal_data.py"])
-    run(["git", "add", "index.html", "README.md", "generate_portal_data.py", "thumbnail_text_overrides.csv", "data", "reports", ".gitignore", "download_best_thumbnails.py", "ocr_thumbnail_text.py", "deploy_pages.py"])
+    run(["git", "add", "index.html", "README.md", "generate_portal_data.py", "thumbnail_text_overrides.csv", "thumbnail_analysis_overrides.jsonl", "data", "reports", ".gitignore", "download_best_thumbnails.py", "ocr_thumbnail_text.py", "update_youtube_metadata.py", "run_maintenance_batch.py", "deploy_pages.py"])
     status = subprocess.run(["git", "status", "--short"], cwd=HERE, text=True, encoding="utf-8", errors="replace", capture_output=True).stdout.strip()
     if not status:
         print("No changes to deploy.")

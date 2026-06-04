@@ -1,7 +1,7 @@
 {
   "videos": 3221,
-  "videos_with_thumbnail_text": 26,
-  "videos_missing_thumbnail_text": 3195,
+  "videos_with_thumbnail_text": 84,
+  "videos_missing_thumbnail_text": 3137,
   "transcripts_light": 2510,
   "transcript_digest_chars_per_video": 1600
 }
