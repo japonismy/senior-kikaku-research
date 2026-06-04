@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>企画リサーチ</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #151515;
+      --panel: #222;
+      --panel2: #2b2b2b;
+      --text: #f2f2f2;
+      --muted: #a8a8a8;
+      --line: #3b3b3b;
+      --accent: #38a169;
+      --warn: #d69e2e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(21, 21, 21, .96);
+      border-bottom: 1px solid var(--line);
+      padding: 14px 18px 12px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) repeat(4, max-content);
+      gap: 10px;
+      align-items: end;
+    }
+    label { color: var(--muted); font-size: 12px; display: grid; gap: 5px; }
+    input, select, button {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel2);
+      color: var(--text);
+      padding: 6px 9px;
+      font: inherit;
+    }
+    button {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    .checks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin-top: 10px;
+      color: var(--text);
+    }
+    .checks label {
+      display: inline-flex;
+      grid-template-columns: none;
+      gap: 6px;
+      align-items: center;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .checks input { min-height: auto; }
+    .status {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    main { padding: 16px 18px 32px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 10px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      cursor: pointer;
+      min-width: 0;
+    }
+    .card img {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      display: block;
+      background: #111;
+    }
+    .meta { padding: 8px; display: grid; gap: 5px; }
+    .row { display: flex; gap: 8px; justify-content: space-between; color: var(--muted); font-size: 12px; }
+    .title {
+      line-height: 1.45;
+      min-height: 40px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .badges { display: flex; gap: 4px; flex-wrap: wrap; min-height: 20px; }
+    .badge {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 7px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .badge.hit { color: #fff; border-color: var(--accent); background: rgba(56,161,105,.18); }
+    .badge.warn { color: #fff; border-color: var(--warn); background: rgba(214,158,46,.18); }
+    dialog {
+      width: min(980px, calc(100vw - 28px));
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0;
+      background: var(--panel);
+      color: var(--text);
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, .78); }
+    .detail {
+      display: grid;
+      grid-template-columns: minmax(280px, 48%) 1fr;
+      gap: 14px;
+      padding: 14px;
+    }
+    .detail img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 4px; }
+    .detail h2 { margin: 0 0 8px; font-size: 18px; line-height: 1.45; }
+    .kv { color: var(--muted); font-size: 12px; display: grid; gap: 4px; }
+    .block { margin-top: 12px; }
+    .block h3 { margin: 0 0 5px; font-size: 13px; color: var(--muted); }
+    .text {
+      white-space: pre-wrap;
+      max-height: 180px;
+      overflow: auto;
+      background: #1a1a1a;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 8px;
+      line-height: 1.55;
+    }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .actions a, .actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 32px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      background: var(--panel2);
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 700;
+    }
+    @media (max-width: 760px) {
+      .controls { grid-template-columns: 1fr 1fr; }
+      .controls label:first-child { grid-column: 1 / -1; }
+      .detail { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>企画リサーチ</h1>
+    <div class="controls">
+      <label>検索語
+        <input id="q" type="search" placeholder="例: 双子 ボロボロ 食堂">
+      </label>
+      <label>チャンネル
+        <select id="channel"></select>
+      </label>
+      <label>視聴回数
+        <input id="minViews" type="number" min="0" step="10000" value="0">
+      </label>
+      <label>公開日以降
+        <input id="dateFrom" type="date">
+      </label>
+      <label>並び替え
+        <select id="sort">
+          <option value="views_desc">視聴回数が多い順</option>
+          <option value="date_desc">公開日が新しい順</option>
+          <option value="date_asc">公開日が古い順</option>
+          <option value="relevance">関連度順</option>
+        </select>
+      </label>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="fieldThumbnail" checked> サムネ文字</label>
+      <label><input type="checkbox" id="fieldTitle" checked> タイトル</label>
+      <label><input type="checkbox" id="fieldTags" checked> タグ</label>
+      <label><input type="checkbox" id="matchAll" checked> すべての語を含む</label>
+      <button id="searchBtn" type="button">検索</button>
+    </div>
+    <div class="status" id="status"></div>
+  </header>
+
+  <main>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <dialog id="dialog">
+    <div class="detail">
+      <div>
+        <img id="detailImg" alt="">
+        <div class="actions">
+          <a id="youtubeLink" href="#" target="_blank" rel="noopener">YouTube</a>
+          <button id="downloadCsvBtn" type="button">CSV DL</button>
+          <button id="downloadThumbnailBtn" type="button">サムネDL</button>
+          <button id="closeBtn" type="button">閉じる</button>
+        </div>
+      </div>
+      <div>
+        <h2 id="detailTitle"></h2>
+        <div class="kv" id="detailMeta"></div>
+        <div class="block">
+          <h3>サムネ文字</h3>
+          <div class="text" id="detailThumbnailText"></div>
+        </div>
+        <div class="block">
+          <h3>冒頭ダイジェスト</h3>
+          <div class="text" id="detailScriptText"></div>
+        </div>
+        <div class="block">
+          <h3>タグ</h3>
+          <div class="badges" id="detailTags"></div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="data/videos.js"></script>
+  <script src="data/transcripts_light.js"></script>
+  <script>
+    const videos = window.VIDEO_DATA || [];
+    const transcriptById = new Map((window.TRANSCRIPT_DATA || []).map(t => [t.video_id, t]));
+    const grid = document.getElementById("grid");
+    const status = document.getElementById("status");
+    const channelSelect = document.getElementById("channel");
+    const fmt = new Intl.NumberFormat("ja-JP");
+
+    function init() {
+      const counts = new Map();
+      videos.forEach(v => counts.set(v.channel, (counts.get(v.channel) || 0) + 1));
+      const channels = [...counts.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, "ja"));
+      channelSelect.innerHTML = '<option value="">すべて</option>' + channels.map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)} (${counts.get(c)})</option>`).join("");
+      document.getElementById("searchBtn").addEventListener("click", render);
+      document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") render(); });
+      document.getElementById("closeBtn").addEventListener("click", () => document.getElementById("dialog").close());
+      render();
+    }
+
+    function render() {
+      const q = document.getElementById("q").value.trim().toLowerCase();
+      const terms = q.split(/\s+/).filter(Boolean);
+      const fields = selectedFields();
+      const matchAll = document.getElementById("matchAll").checked;
+      const channel = channelSelect.value;
+      const minViews = Number(document.getElementById("minViews").value || 0);
+      const dateFrom = document.getElementById("dateFrom").value;
+      const sort = document.getElementById("sort").value;
+
+      let rows = videos.map(v => {
+        const hit = hitInfo(v, terms, fields, matchAll);
+        return { v, hit };
+      }).filter(({ v, hit }) => {
+        if (channel && v.channel !== channel) return false;
+        if ((v.view_count || 0) < minViews) return false;
+        if (dateFrom && (!v.published_at || v.published_at.slice(0, 10) < dateFrom)) return false;
+        if (terms.length && !hit.ok) return false;
+        return true;
+      });
+
+      if (sort === "views_desc") rows.sort((a, b) => (b.v.view_count || 0) - (a.v.view_count || 0));
+      if (sort === "date_desc") rows.sort((a, b) => String(b.v.published_at).localeCompare(String(a.v.published_at)));
+      if (sort === "date_asc") rows.sort((a, b) => String(a.v.published_at).localeCompare(String(b.v.published_at)));
+      if (sort === "relevance") rows.sort((a, b) => b.hit.score - a.hit.score || (b.v.view_count || 0) - (a.v.view_count || 0));
+
+      const limited = rows.slice(0, 500);
+      status.textContent = `表示 ${fmt.format(limited.length)}件 / ヒット ${fmt.format(rows.length)}件 / 全 ${fmt.format(videos.length)}件`;
+      grid.innerHTML = limited.map(({ v, hit }) => cardHtml(v, hit)).join("");
+      grid.querySelectorAll(".card").forEach(el => {
+        el.addEventListener("click", () => openDetail(videos[Number(el.dataset.idx)]));
+      });
+    }
+
+    function selectedFields() {
+      return {
+        thumbnail: document.getElementById("fieldThumbnail").checked,
+        title: document.getElementById("fieldTitle").checked,
+        tags: document.getElementById("fieldTags").checked,
+      };
+    }
+
+    function hitInfo(v, terms, fields, matchAll) {
+      if (!terms.length) return { ok: true, score: 0, fields: [] };
+      const texts = [];
+      if (fields.thumbnail) texts.push(["サムネ文字", v.thumbnail_text || ""]);
+      if (fields.title) texts.push(["タイトル", v.title || ""]);
+      if (fields.tags) texts.push(["タグ", (v.tags || []).join(" ")]);
+      const termHits = terms.map(term => {
+        const hitFields = texts.filter(([, text]) => String(text).toLowerCase().includes(term)).map(([name]) => name);
+        return hitFields;
+      });
+      const ok = matchAll ? termHits.every(x => x.length) : termHits.some(x => x.length);
+      const fieldsHit = [...new Set(termHits.flat())];
+      return { ok, score: fieldsHit.length + termHits.filter(x => x.length).length, fields: fieldsHit };
+    }
+
+    function cardHtml(v, hit) {
+      const idx = videos.indexOf(v);
+      const date = (v.published_at || "").slice(0, 10) || "日付なし";
+      const badges = hit.fields.length
+        ? hit.fields.map(x => `<span class="badge hit">${escapeHtml(x)}</span>`).join("")
+        : (v.thumbnail_text ? "" : '<span class="badge warn">サムネ文字未整備</span>');
+      return `<article class="card" data-idx="${idx}">
+        <img src="${escapeAttr(preferredThumbnail(v))}" alt="" loading="lazy" onerror="fallbackImage(this, ${idx})">
+        <div class="meta">
+          <div class="row"><span>${escapeHtml(v.channel || "")}</span><span>${fmt.format(v.view_count || 0)} 回</span></div>
+          <div class="title">${escapeHtml(v.title || "")}</div>
+          <div class="row"><span>${date}</span><span>${escapeHtml(v.video_id)}</span></div>
+          <div class="badges">${badges}</div>
+        </div>
+      </article>`;
+    }
+
+    function openDetail(v) {
+      const t = transcriptById.get(v.video_id);
+      const detailImg = document.getElementById("detailImg");
+      detailImg.dataset.idx = videos.indexOf(v);
+      detailImg.src = preferredThumbnail(v);
+      document.getElementById("detailTitle").textContent = v.title || "";
+      document.getElementById("youtubeLink").href = v.youtube_url;
+      document.getElementById("detailMeta").innerHTML = [
+        `チャンネル: ${escapeHtml(v.channel || "")}`,
+        `視聴回数: ${fmt.format(v.view_count || 0)} 回`,
+        `公開日: ${escapeHtml((v.published_at || "").slice(0, 10) || "日付なし")}`,
+        `更新日: ${escapeHtml(formatDateTime(v.fetched_at) || "不明")}`,
+        `video_id: ${escapeHtml(v.video_id)}`
+      ].map(x => `<div>${x}</div>`).join("");
+      document.getElementById("detailThumbnailText").textContent = v.thumbnail_text || "未整備";
+      document.getElementById("detailScriptText").textContent = t ? t.digest + (t.chars > t.digest.length ? `\n\n... (${fmt.format(t.chars)}文字中、冒頭${fmt.format(t.digest.length)}文字)` : "") : "未取得";
+      document.getElementById("detailTags").innerHTML = (v.tags || []).slice(0, 80).map(x => `<span class="badge">${escapeHtml(x)}</span>`).join("");
+      document.getElementById("downloadCsvBtn").onclick = () => downloadCsv(v, t);
+      document.getElementById("downloadThumbnailBtn").onclick = () => downloadThumbnail(v);
+      document.getElementById("dialog").showModal();
+    }
+
+    function downloadCsv(v, t) {
+      const row = [v.video_id, v.channel || "", v.title || "", v.youtube_url, preferredThumbnail(v), v.published_at || "", v.fetched_at || "", v.view_count || 0, t ? t.digest : ""];
+      const csv = ["video_id,channel,title,youtube_url,thumbnail_url,published_at,fetched_at,view_count,digest", row.map(csvCell).join(",")].join("\n");
+      downloadBlob(`${downloadBaseName(v)}.csv`, csv, "text/csv;charset=utf-8");
+    }
+
+    async function downloadThumbnail(v) {
+      const url = preferredThumbnail(v);
+      try {
+        const res = await fetch(url, { mode: "cors" });
+        if (!res.ok) throw new Error(String(res.status));
+        const blob = await res.blob();
+        const ext = blob.type.includes("png") ? "png" : "jpg";
+        downloadBlob(`${downloadBaseName(v)}_thumbnail.${ext}`, blob, blob.type || "image/jpeg");
+      } catch (e) {
+        window.open(url || v.thumbnail_url, "_blank", "noopener");
+      }
+    }
+
+    function preferredThumbnail(v) {
+      return v.thumbnail_max_url || v.thumbnail_url || "";
+    }
+
+    function fallbackImage(img, idx) {
+      const v = videos[idx];
+      const urls = (v && v.thumbnail_fallback_urls ? v.thumbnail_fallback_urls : []).filter(Boolean);
+      const current = img.src;
+      const next = urls.find(url => !current.includes(url.split("/").pop()));
+      if (next) img.src = next;
+    }
+
+    function downloadBlob(filename, body, type) {
+      const blob = body instanceof Blob ? body : new Blob([body], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function csvCell(value) {
+      return `"${String(value).replace(/"/g, '""')}"`;
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "";
+      return String(value).replace("T", " ").replace("Z", "").slice(0, 19);
+    }
+
+    function downloadBaseName(v) {
+      const title = sanitizeFilename(v.title || "").slice(0, 20) || "untitled";
+      return `${v.video_id}_${title}`;
+    }
+
+    function sanitizeFilename(value) {
+      return String(value)
+        .replace(/[\\/:*?"<>|\r\n]/g, "")
+        .replace(/\s+/g, "")
+        .trim();
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+    function escapeAttr(value) { return escapeHtml(value); }
+
+    init();
+  </script>
+</body>
+</html>
