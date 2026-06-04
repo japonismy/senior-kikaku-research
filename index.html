@@ -204,6 +204,7 @@
       <label><input type="checkbox" id="fieldTitle" checked> タイトル</label>
       <label><input type="checkbox" id="fieldTags" checked> タグ</label>
       <label><input type="checkbox" id="matchAll" checked> すべての語を含む</label>
+      <label><input type="checkbox" id="missingThumbnailTextOnly"> サムネ文字未整備のみ</label>
       <button id="searchBtn" type="button">検索</button>
     </div>
     <div class="status" id="status"></div>
@@ -273,6 +274,7 @@
       const minViews = Number(document.getElementById("minViews").value || 0);
       const dateFrom = document.getElementById("dateFrom").value;
       const sort = document.getElementById("sort").value;
+      const missingThumbnailTextOnly = document.getElementById("missingThumbnailTextOnly").checked;
 
       let rows = videos.map(v => {
         const hit = hitInfo(v, terms, fields, matchAll);
@@ -281,6 +283,7 @@
         if (channel && v.channel !== channel) return false;
         if ((v.view_count || 0) < minViews) return false;
         if (dateFrom && (!v.published_at || v.published_at.slice(0, 10) < dateFrom)) return false;
+        if (missingThumbnailTextOnly && (v.thumbnail_text || "").trim()) return false;
         if (terms.length && !hit.ok) return false;
         return true;
       });
