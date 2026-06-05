@@ -61,18 +61,20 @@ def main() -> int:
     ap.add_argument("--sleep", type=float, default=1.0)
     ap.add_argument("--min-views", type=int, default=0)
     ap.add_argument("--engine", choices=["tesseract", "gemini"], default="tesseract")
+    ap.add_argument("--model", default="gemini-2.5-flash-lite")
     args = ap.parse_args()
 
     WORK_DIR.mkdir(exist_ok=True)
     client = model_id = None
     if args.engine == "gemini":
-        client, model_id = load_client()
+        client, model_id = load_client(args.model)
     overrides = read_overrides()
     analyses = read_analysis()
     videos = load_videos()
     targets = [
         v for v in videos
         if not overrides.get(v["video_id"])
+        and not analyses.get(v["video_id"])
         and not (v.get("thumbnail_text") or "").strip()
         and int(v.get("view_count") or 0) >= args.min_views
         and (ASSET_DIR / f"{v['video_id']}.jpg").exists()
@@ -87,9 +89,9 @@ def main() -> int:
         try:
             data = ocr_image(client, model_id, image_path) if args.engine == "gemini" else ocr_image_tesseract(image_path)
             text = clean_text(data.get("thumbnail_text", ""))
+            analyses[video_id] = normalize_analysis(video, data)
             if text:
                 overrides[video_id] = {"thumbnail_text": text, "note": "gemini_ocr"}
-                analyses[video_id] = normalize_analysis(video, data)
                 ok += 1
             else:
                 ng += 1
@@ -110,13 +112,13 @@ def main() -> int:
     return 0
 
 
-def load_client():
+def load_client(model_id: str):
     from google import genai
     cfg = Config()
     key = cfg.gemini_api_key
     if not key:
         raise SystemExit("Gemini API key is not configured.")
-    return genai.Client(api_key=key), cfg.get_model("text_llm") if hasattr(cfg, "get_model") else "gemini-2.0-flash"
+    return genai.Client(api_key=key), model_id
 
 
 def ocr_image(client, model_id: str, image_path: Path) -> dict:
