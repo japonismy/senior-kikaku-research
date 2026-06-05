@@ -80,7 +80,8 @@ def main() -> int:
 
     rows = []
     processed = ok = ng = 0
-    for video in targets[: args.limit]:
+    run_targets = targets if args.limit == 0 else targets[: args.limit]
+    for video in run_targets:
         video_id = video["video_id"]
         image_path = ASSET_DIR / f"{video_id}.jpg"
         try:
@@ -97,6 +98,9 @@ def main() -> int:
             ng += 1
             rows.append(report_row(video, "", "", "", f"{type(e).__name__}: {str(e)[:120]}"))
         processed += 1
+        write_overrides(overrides)
+        write_analysis(analyses)
+        write_report(rows)
         time.sleep(args.sleep)
 
     write_overrides(overrides)

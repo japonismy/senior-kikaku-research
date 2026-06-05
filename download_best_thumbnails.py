@@ -17,7 +17,7 @@ REPORT_PATH = HERE / "reports" / "thumbnail_best_assets.csv"
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=50)
+    ap.add_argument("--limit", type=int, default=50, help="Number of new/missing assets to download. 0 means all.")
     ap.add_argument("--sleep", type=float, default=0.2)
     ap.add_argument("--overwrite", action="store_true")
     args = ap.parse_args()
@@ -25,7 +25,8 @@ def main() -> int:
     ASSET_DIR.mkdir(exist_ok=True)
     videos = load_videos()
     rows = []
-    done = ok = ng = 0
+    seen_rows = read_existing_report()
+    done = ok = ng = skipped_existing = 0
 
     for video in videos:
         if args.limit and done >= args.limit:
@@ -34,18 +35,18 @@ def main() -> int:
         out = ASSET_DIR / f"{video_id}.jpg"
         if out.exists() and not args.overwrite:
             rows.append(row(video, "existing", str(out), out.stat().st_size, ""))
-            done += 1
+            skipped_existing += 1
             continue
 
-        result = download_best(video_id, out)
+        result = download_best(video, out)
         rows.append(row(video, result["quality"], str(out) if out.exists() else "", result["bytes"], result["error"]))
         done += 1
         ok += 1 if out.exists() else 0
         ng += 0 if out.exists() else 1
         time.sleep(args.sleep)
 
-    write_report(rows)
-    print(json.dumps({"processed": done, "ok": ok, "ng": ng, "report": str(REPORT_PATH)}, ensure_ascii=False))
+    write_report(merge_report_rows(seen_rows, rows))
+    print(json.dumps({"processed": done, "ok": ok, "ng": ng, "skipped_existing": skipped_existing, "report": str(REPORT_PATH)}, ensure_ascii=False))
     return 0
 
 
@@ -57,12 +58,18 @@ def load_videos() -> list[dict]:
     return json.loads(text[len(prefix):].strip().rstrip(";"))
 
 
-def download_best(video_id: str, out: Path) -> dict:
+def download_best(video: dict, out: Path) -> dict:
+    video_id = video["video_id"]
     candidates = [
         ("maxresdefault", f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"),
         ("sddefault", f"https://i.ytimg.com/vi/{video_id}/sddefault.jpg"),
         ("hqdefault", f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"),
     ]
+    for url in video.get("thumbnail_fallback_urls", []) or []:
+        if url and ("fallback", url) not in candidates:
+            candidates.append(("fallback", url))
+    if video.get("thumbnail_url"):
+        candidates.append(("db_thumbnail_url", video["thumbnail_url"]))
     last_error = ""
     for quality, url in candidates:
         try:
@@ -99,6 +106,21 @@ def write_report(rows: list[dict]) -> None:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def read_existing_report() -> dict[str, dict]:
+    if not REPORT_PATH.exists():
+        return {}
+    with REPORT_PATH.open("r", newline="", encoding="utf-8-sig") as f:
+        return {row["video_id"]: row for row in csv.DictReader(f) if row.get("video_id")}
+
+
+def merge_report_rows(existing: dict[str, dict], rows: list[dict]) -> list[dict]:
+    merged = dict(existing)
+    for row_data in rows:
+        if row_data.get("video_id"):
+            merged[row_data["video_id"]] = row_data
+    return list(merged.values())
 
 
 if __name__ == "__main__":
