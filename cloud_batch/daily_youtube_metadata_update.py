@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from google.cloud import bigquery
+from google.cloud import storage
 
 
 PROJECT_ID = os.environ.get("PROJECT_ID", "rugged-destiny-408613")
@@ -18,6 +19,10 @@ DATASET = os.environ.get("BQ_DATASET", "senior_reading_all")
 VIDEO_TABLE = os.environ.get("VIDEO_TABLE", "analysis_competitor_db__videos")
 CHANNEL_TABLE = os.environ.get("CHANNEL_TABLE", "analysis_competitor_db__channels")
 RUN_LOG_TABLE = os.environ.get("RUN_LOG_TABLE", "youtube_metadata_update_runs")
+THUMBNAIL_ASSET_TABLE = os.environ.get("THUMBNAIL_ASSET_TABLE", "thumbnail_assets")
+THUMBNAIL_BUCKET = os.environ.get("THUMBNAIL_BUCKET", "senior-share-staging-570862915709")
+THUMBNAIL_PREFIX = os.environ.get("THUMBNAIL_PREFIX", "senior_reading_thumbnails")
+DOWNLOAD_THUMBNAILS = os.environ.get("DOWNLOAD_THUMBNAILS", "1") != "0"
 LIMIT = int(os.environ.get("LIMIT", "0"))
 SLEEP_SEC = float(os.environ.get("SLEEP_SEC", "0.1"))
 
@@ -26,11 +31,13 @@ def main() -> int:
     started_at = utc_now()
     run_id = str(uuid4())
     client = bigquery.Client(project=PROJECT_ID)
+    storage_client = storage.Client(project=PROJECT_ID)
     keys = load_api_keys()
     if not keys:
         raise SystemExit("YOUTUBE_API_KEY or YOUTUBE_API_KEYS is required.")
 
     ensure_run_log_table(client)
+    ensure_thumbnail_asset_table(client)
     ids = fetch_target_video_ids(client)
     if LIMIT:
         ids = ids[:LIMIT]
@@ -73,6 +80,10 @@ def main() -> int:
     if updated_rows:
         merge_video_updates(client, updated_rows)
 
+    thumbnail_stats = {"checked": 0, "downloaded": 0, "skipped": 0, "failed": 0}
+    if DOWNLOAD_THUMBNAILS and updated_rows:
+        thumbnail_stats = sync_thumbnail_assets(client, storage_client, updated_rows)
+
     finished_at = utc_now()
     log_run(
         client,
@@ -85,6 +96,9 @@ def main() -> int:
             "missing_count": missing,
             "quota_skips": quota_skips,
             "key_used": keys[key_index][0] if key_index < len(keys) else "",
+            "thumbnail_checked": thumbnail_stats["checked"],
+            "thumbnail_downloaded": thumbnail_stats["downloaded"],
+            "thumbnail_failed": thumbnail_stats["failed"],
             "error": "\n".join(errors)[:2000],
         },
     )
@@ -95,6 +109,9 @@ def main() -> int:
         "missing_count": missing,
         "quota_skips": quota_skips,
         "key_used": keys[key_index][0] if key_index < len(keys) else "",
+        "thumbnail_checked": thumbnail_stats["checked"],
+        "thumbnail_downloaded": thumbnail_stats["downloaded"],
+        "thumbnail_failed": thumbnail_stats["failed"],
     }, ensure_ascii=False))
     return 0 if not errors else 1
 
@@ -209,6 +226,130 @@ def merge_video_updates(client: bigquery.Client, rows: list[dict]) -> None:
     client.delete_table(temp_table, not_found_ok=True)
 
 
+def sync_thumbnail_assets(client: bigquery.Client, storage_client: storage.Client, rows: list[dict]) -> dict[str, int]:
+    existing = fetch_existing_thumbnail_assets(client, [row["video_id"] for row in rows])
+    bucket = storage_client.bucket(THUMBNAIL_BUCKET)
+    asset_rows = []
+    stats = {"checked": 0, "downloaded": 0, "skipped": 0, "failed": 0}
+    for row in rows:
+        video_id = row["video_id"]
+        source_url = row.get("thumbnail_url", "")
+        if not source_url:
+            continue
+        stats["checked"] += 1
+        current = existing.get(video_id)
+        if current and current.get("source_url") == source_url and current.get("gcs_uri"):
+            stats["skipped"] += 1
+            continue
+        asset_rows.append(download_thumbnail_asset(bucket, video_id, source_url))
+        if asset_rows[-1].get("error"):
+            stats["failed"] += 1
+        else:
+            stats["downloaded"] += 1
+    if asset_rows:
+        merge_thumbnail_assets(client, asset_rows)
+    return stats
+
+
+def fetch_existing_thumbnail_assets(client: bigquery.Client, video_ids: list[str]) -> dict[str, dict]:
+    if not video_ids:
+        return {}
+    table_id = f"{PROJECT_ID}.{DATASET}.{THUMBNAIL_ASSET_TABLE}"
+    sql = f"""
+    SELECT video_id, source_url, gcs_uri
+    FROM `{table_id}`
+    WHERE video_id IN UNNEST(@video_ids)
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ArrayQueryParameter("video_ids", "STRING", video_ids)]
+    )
+    try:
+        return {row.video_id: dict(row) for row in client.query(sql, job_config=job_config).result()}
+    except Exception:
+        return {}
+
+
+def download_thumbnail_asset(bucket: storage.Bucket, video_id: str, source_url: str) -> dict:
+    fetched_at = utc_now().strftime("%Y-%m-%d %H:%M:%S")
+    quality = thumbnail_quality(source_url)
+    object_name = f"{THUMBNAIL_PREFIX}/{video_id}.jpg"
+    gcs_uri = f"gs://{THUMBNAIL_BUCKET}/{object_name}"
+    try:
+        req = urllib.request.Request(source_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "image/jpeg")
+        blob = bucket.blob(object_name)
+        blob.upload_from_string(data, content_type=content_type)
+        return {
+            "video_id": video_id,
+            "gcs_uri": gcs_uri,
+            "source_url": source_url,
+            "quality": quality,
+            "bytes": len(data),
+            "content_type": content_type,
+            "fetched_at": fetched_at,
+            "error": "",
+        }
+    except Exception as e:
+        return {
+            "video_id": video_id,
+            "gcs_uri": "",
+            "source_url": source_url,
+            "quality": quality,
+            "bytes": 0,
+            "content_type": "",
+            "fetched_at": fetched_at,
+            "error": f"{type(e).__name__}: {str(e)[:300]}",
+        }
+
+
+def thumbnail_quality(url: str) -> str:
+    for value in ["maxresdefault", "sddefault", "hqdefault", "mqdefault", "default"]:
+        if value in url:
+            return value
+    return ""
+
+
+def merge_thumbnail_assets(client: bigquery.Client, rows: list[dict]) -> None:
+    temp_table = f"{PROJECT_ID}.{DATASET}._tmp_thumbnail_assets_{uuid4().hex}"
+    schema = [
+        bigquery.SchemaField("video_id", "STRING"),
+        bigquery.SchemaField("gcs_uri", "STRING"),
+        bigquery.SchemaField("source_url", "STRING"),
+        bigquery.SchemaField("quality", "STRING"),
+        bigquery.SchemaField("bytes", "INT64"),
+        bigquery.SchemaField("content_type", "STRING"),
+        bigquery.SchemaField("fetched_at", "STRING"),
+        bigquery.SchemaField("error", "STRING"),
+    ]
+    client.load_table_from_json(
+        rows,
+        temp_table,
+        job_config=bigquery.LoadJobConfig(schema=schema, write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE),
+    ).result()
+    sql = f"""
+    MERGE `{PROJECT_ID}.{DATASET}.{THUMBNAIL_ASSET_TABLE}` T
+    USING `{temp_table}` S
+    ON T.video_id = S.video_id
+    WHEN MATCHED THEN UPDATE SET
+      gcs_uri = S.gcs_uri,
+      source_url = S.source_url,
+      quality = S.quality,
+      bytes = S.bytes,
+      content_type = S.content_type,
+      fetched_at = S.fetched_at,
+      error = S.error
+    WHEN NOT MATCHED THEN INSERT (
+      video_id, gcs_uri, source_url, quality, bytes, content_type, fetched_at, error
+    ) VALUES (
+      S.video_id, S.gcs_uri, S.source_url, S.quality, S.bytes, S.content_type, S.fetched_at, S.error
+    )
+    """
+    client.query(sql).result()
+    client.delete_table(temp_table, not_found_ok=True)
+
+
 def ensure_run_log_table(client: bigquery.Client) -> None:
     table_id = f"{PROJECT_ID}.{DATASET}.{RUN_LOG_TABLE}"
     table = bigquery.Table(
@@ -222,10 +363,49 @@ def ensure_run_log_table(client: bigquery.Client) -> None:
             bigquery.SchemaField("missing_count", "INT64"),
             bigquery.SchemaField("quota_skips", "INT64"),
             bigquery.SchemaField("key_used", "STRING"),
+            bigquery.SchemaField("thumbnail_checked", "INT64"),
+            bigquery.SchemaField("thumbnail_downloaded", "INT64"),
+            bigquery.SchemaField("thumbnail_failed", "INT64"),
             bigquery.SchemaField("error", "STRING"),
         ],
     )
     client.create_table(table, exists_ok=True)
+    ensure_columns(
+        client,
+        RUN_LOG_TABLE,
+        [
+            ("thumbnail_checked", "INT64"),
+            ("thumbnail_downloaded", "INT64"),
+            ("thumbnail_failed", "INT64"),
+        ],
+    )
+
+
+def ensure_thumbnail_asset_table(client: bigquery.Client) -> None:
+    table = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{THUMBNAIL_ASSET_TABLE}",
+        schema=[
+            bigquery.SchemaField("video_id", "STRING"),
+            bigquery.SchemaField("gcs_uri", "STRING"),
+            bigquery.SchemaField("source_url", "STRING"),
+            bigquery.SchemaField("quality", "STRING"),
+            bigquery.SchemaField("bytes", "INT64"),
+            bigquery.SchemaField("content_type", "STRING"),
+            bigquery.SchemaField("fetched_at", "STRING"),
+            bigquery.SchemaField("error", "STRING"),
+        ],
+    )
+    client.create_table(table, exists_ok=True)
+
+
+def ensure_columns(client: bigquery.Client, table_name: str, columns: list[tuple[str, str]]) -> None:
+    table = client.get_table(f"{PROJECT_ID}.{DATASET}.{table_name}")
+    existing = {field.name for field in table.schema}
+    missing = [bigquery.SchemaField(name, type_) for name, type_ in columns if name not in existing]
+    if not missing:
+        return
+    table.schema = list(table.schema) + missing
+    client.update_table(table, ["schema"])
 
 
 def log_run(client: bigquery.Client, row: dict) -> None:

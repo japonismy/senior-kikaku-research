@@ -36,7 +36,7 @@ if (-not $existingSa) {
     --display-name "Senior Reading Batch" | Out-Null
 }
 
-foreach ($role in @("roles/bigquery.dataEditor", "roles/bigquery.jobUser", "roles/secretmanager.secretAccessor", "roles/run.developer")) {
+foreach ($role in @("roles/bigquery.dataEditor", "roles/bigquery.jobUser", "roles/secretmanager.secretAccessor", "roles/run.developer", "roles/storage.objectAdmin")) {
   gcloud projects add-iam-policy-binding $ProjectId `
     --member "serviceAccount:$serviceAccountEmail" `
     --role $role `
@@ -71,7 +71,7 @@ try {
     --region $Region `
     --source "." `
     --service-account $serviceAccountEmail `
-    --set-env-vars "PROJECT_ID=$ProjectId,BQ_DATASET=senior_reading_all,LIMIT=0,SLEEP_SEC=0.1" `
+    --set-env-vars "PROJECT_ID=$ProjectId,BQ_DATASET=senior_reading_all,LIMIT=0,SLEEP_SEC=0.1,DOWNLOAD_THUMBNAILS=1,THUMBNAIL_BUCKET=senior-share-staging-570862915709,THUMBNAIL_PREFIX=senior_reading_thumbnails" `
     --set-secrets "YOUTUBE_API_KEY=$SecretName:latest" `
     --max-retries 1 `
     --tasks 1 | Out-Null
