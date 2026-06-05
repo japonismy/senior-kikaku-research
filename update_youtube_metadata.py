@@ -5,6 +5,7 @@ import argparse
 import json
 import sqlite3
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -28,8 +29,12 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
-    key = Config().youtube_api_key
-    if not key:
+    cfg = Config()
+    keys = list((cfg.youtube_api_keys or {}).items())
+    if cfg.youtube_api_key and not any(k == "default" for k, _ in keys):
+        keys.insert(0, ("default", cfg.youtube_api_key))
+    keys = [(name, key) for name, key in keys if key]
+    if not keys:
         raise SystemExit("YOUTUBE_API_KEY is not configured.")
 
     con = sqlite3.connect(str(DB_PATH))
@@ -38,9 +43,24 @@ def main() -> int:
     if args.limit:
         ids = ids[: args.limit]
 
-    updated = missing = 0
+    updated = missing = quota_skips = 0
+    key_index = 0
     for batch in chunks(ids, 50):
-        data = fetch_videos(key, batch)
+        data = None
+        while key_index < len(keys):
+            key_name, key = keys[key_index]
+            try:
+                data = fetch_videos(key, batch)
+                break
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", "replace")
+                if e.code == 403 and "quotaExceeded" in body:
+                    quota_skips += 1
+                    key_index += 1
+                    continue
+                raise
+        if data is None:
+            raise SystemExit("All YouTube API keys appear to be quota-exceeded.")
         items = {item["id"]: item for item in data.get("items", [])}
         for vid in batch:
             item = items.get(vid)
@@ -50,7 +70,7 @@ def main() -> int:
             update_row(con, vid, item)
             updated += 1
         con.commit()
-    print(json.dumps({"target": len(ids), "updated": updated, "missing": missing}, ensure_ascii=False))
+    print(json.dumps({"target": len(ids), "updated": updated, "missing": missing, "quota_skips": quota_skips, "key_used": keys[key_index][0] if key_index < len(keys) else ""}, ensure_ascii=False))
     return 0
 
 
