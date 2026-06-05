@@ -1,4 +1,6 @@
 thumbnail_assets/
 ocr_work/
 bq_sync_export/
+__pycache__/
+*.pyc
 *.log
