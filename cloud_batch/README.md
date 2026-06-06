@@ -8,6 +8,7 @@
 - 正本: BigQuery `rugged-destiny-408613.senior_reading_all`
 - 対象: `sync_target = senior_reading`、`include = true`、韓国元動画除外、ショート除外
 - 更新内容: title / published_at / view_count / like_count / comment_count / thumbnail_url / duration / fetched_at
+- KPI履歴: `video_snapshots` に view_count / like_count / comment_count / like_rate / comment_rate を日次保存
 - サムネ: GCS `gs://senior-share-staging-570862915709/senior_reading_thumbnails/{video_id}.jpg` へ保存
 - 実行ログ: `youtube_metadata_update_runs`
 - サムネ保存ログ: `thumbnail_assets`
@@ -15,6 +16,7 @@
 ## 運用
 
 - 毎日03:00 JST: YouTubeメタデータ更新 + サムネDL
+- 同じ実行で `video_snapshots` へ日次KPIをUPSERTする
 - サムネDLは、既に保存済みで `source_url` が変わっていない動画はスキップする
 - Gemini OCR/構図分析は定期自動実行しない
 - Gemini対象は `research_channel_scopes.scope = 'jun_kando_12'` の純感動12chに絞る

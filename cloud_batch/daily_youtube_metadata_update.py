@@ -19,6 +19,7 @@ DATASET = os.environ.get("BQ_DATASET", "senior_reading_all")
 VIDEO_TABLE = os.environ.get("VIDEO_TABLE", "analysis_competitor_db__videos")
 CHANNEL_TABLE = os.environ.get("CHANNEL_TABLE", "analysis_competitor_db__channels")
 RUN_LOG_TABLE = os.environ.get("RUN_LOG_TABLE", "youtube_metadata_update_runs")
+SNAPSHOT_TABLE = os.environ.get("SNAPSHOT_TABLE", "video_snapshots")
 THUMBNAIL_ASSET_TABLE = os.environ.get("THUMBNAIL_ASSET_TABLE", "thumbnail_assets")
 THUMBNAIL_BUCKET = os.environ.get("THUMBNAIL_BUCKET", "senior-share-staging-570862915709")
 THUMBNAIL_PREFIX = os.environ.get("THUMBNAIL_PREFIX", "senior_reading_thumbnails")
@@ -37,6 +38,7 @@ def main() -> int:
         raise SystemExit("YOUTUBE_API_KEY or YOUTUBE_API_KEYS is required.")
 
     ensure_run_log_table(client)
+    ensure_snapshot_table(client)
     ensure_thumbnail_asset_table(client)
     ids = fetch_target_video_ids(client)
     if LIMIT:
@@ -79,6 +81,7 @@ def main() -> int:
 
     if updated_rows:
         merge_video_updates(client, updated_rows)
+        merge_video_snapshots(client, updated_rows)
 
     thumbnail_stats = {"checked": 0, "downloaded": 0, "skipped": 0, "failed": 0}
     if DOWNLOAD_THUMBNAILS and updated_rows:
@@ -221,6 +224,63 @@ def merge_video_updates(client: bigquery.Client, rows: list[dict]) -> None:
       thumbnail_url = COALESCE(NULLIF(S.thumbnail_url, ''), T.thumbnail_url),
       duration = S.duration,
       fetched_at = S.fetched_at
+    """
+    client.query(sql).result()
+    client.delete_table(temp_table, not_found_ok=True)
+
+
+def merge_video_snapshots(client: bigquery.Client, rows: list[dict]) -> None:
+    snapshot_rows = []
+    for row in rows:
+        snapshot_date = row["fetched_at"][:10]
+        views = row.get("view_count") or 0
+        likes = row.get("like_count") or 0
+        comments = row.get("comment_count") or 0
+        snapshot_rows.append({
+            "snapshot_date": snapshot_date,
+            "video_id": row["video_id"],
+            "view_count": views,
+            "like_count": likes,
+            "comment_count": comments,
+            "like_rate": likes / views if views else 0.0,
+            "comment_rate": comments / views if views else 0.0,
+            "fetched_at": row["fetched_at"],
+        })
+    temp_table = f"{PROJECT_ID}.{DATASET}._tmp_video_snapshots_{uuid4().hex}"
+    client.load_table_from_json(
+        snapshot_rows,
+        temp_table,
+        job_config=bigquery.LoadJobConfig(
+            schema=[
+                bigquery.SchemaField("snapshot_date", "DATE"),
+                bigquery.SchemaField("video_id", "STRING"),
+                bigquery.SchemaField("view_count", "INT64"),
+                bigquery.SchemaField("like_count", "INT64"),
+                bigquery.SchemaField("comment_count", "INT64"),
+                bigquery.SchemaField("like_rate", "FLOAT64"),
+                bigquery.SchemaField("comment_rate", "FLOAT64"),
+                bigquery.SchemaField("fetched_at", "TIMESTAMP"),
+            ],
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        ),
+    ).result()
+    sql = f"""
+    MERGE `{PROJECT_ID}.{DATASET}.{SNAPSHOT_TABLE}` T
+    USING `{temp_table}` S
+    ON T.snapshot_date = S.snapshot_date
+      AND T.video_id = S.video_id
+    WHEN MATCHED THEN UPDATE SET
+      view_count = S.view_count,
+      like_count = S.like_count,
+      comment_count = S.comment_count,
+      like_rate = S.like_rate,
+      comment_rate = S.comment_rate,
+      fetched_at = S.fetched_at
+    WHEN NOT MATCHED THEN INSERT (
+      snapshot_date, video_id, view_count, like_count, comment_count, like_rate, comment_rate, fetched_at
+    ) VALUES (
+      S.snapshot_date, S.video_id, S.view_count, S.like_count, S.comment_count, S.like_rate, S.comment_rate, S.fetched_at
+    )
     """
     client.query(sql).result()
     client.delete_table(temp_table, not_found_ok=True)
@@ -396,6 +456,32 @@ def ensure_thumbnail_asset_table(client: bigquery.Client) -> None:
         ],
     )
     client.create_table(table, exists_ok=True)
+
+
+def ensure_snapshot_table(client: bigquery.Client) -> None:
+    table = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{SNAPSHOT_TABLE}",
+        schema=[
+            bigquery.SchemaField("snapshot_date", "DATE"),
+            bigquery.SchemaField("video_id", "STRING"),
+            bigquery.SchemaField("view_count", "INT64"),
+            bigquery.SchemaField("like_count", "INT64"),
+            bigquery.SchemaField("comment_count", "INT64"),
+            bigquery.SchemaField("like_rate", "FLOAT64"),
+            bigquery.SchemaField("comment_rate", "FLOAT64"),
+            bigquery.SchemaField("fetched_at", "TIMESTAMP"),
+        ],
+    )
+    client.create_table(table, exists_ok=True)
+    ensure_columns(
+        client,
+        SNAPSHOT_TABLE,
+        [
+            ("like_rate", "FLOAT64"),
+            ("comment_rate", "FLOAT64"),
+            ("fetched_at", "TIMESTAMP"),
+        ],
+    )
 
 
 def ensure_columns(client: bigquery.Client, table_name: str, columns: list[tuple[str, str]]) -> None:
