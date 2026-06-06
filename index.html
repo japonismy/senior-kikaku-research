@@ -193,6 +193,10 @@
       <label>並び替え
         <select id="sort">
           <option value="views_desc">視聴回数が多い順</option>
+          <option value="likes_desc">高評価が多い順</option>
+          <option value="comments_desc">コメントが多い順</option>
+          <option value="like_rate_desc">高評価率が高い順</option>
+          <option value="comment_rate_desc">コメント率が高い順</option>
           <option value="date_desc">公開日が新しい順</option>
           <option value="date_asc">公開日が古い順</option>
           <option value="relevance">関連度順</option>
@@ -293,6 +297,10 @@
       });
 
       if (sort === "views_desc") rows.sort((a, b) => (b.v.view_count || 0) - (a.v.view_count || 0));
+      if (sort === "likes_desc") rows.sort((a, b) => (b.v.like_count || 0) - (a.v.like_count || 0));
+      if (sort === "comments_desc") rows.sort((a, b) => (b.v.comment_count || 0) - (a.v.comment_count || 0));
+      if (sort === "like_rate_desc") rows.sort((a, b) => rateValue(b.v.like_count, b.v.view_count) - rateValue(a.v.like_count, a.v.view_count));
+      if (sort === "comment_rate_desc") rows.sort((a, b) => rateValue(b.v.comment_count, b.v.view_count) - rateValue(a.v.comment_count, a.v.view_count));
       if (sort === "date_desc") rows.sort((a, b) => String(b.v.published_at).localeCompare(String(a.v.published_at)));
       if (sort === "date_asc") rows.sort((a, b) => String(a.v.published_at).localeCompare(String(b.v.published_at)));
       if (sort === "relevance") rows.sort((a, b) => b.hit.score - a.hit.score || (b.v.view_count || 0) - (a.v.view_count || 0));
@@ -339,6 +347,7 @@
         <div class="meta">
           <div class="row"><span>${escapeHtml(v.channel || "")}</span><span>${fmt.format(v.view_count || 0)} 回</span></div>
           <div class="title">${escapeHtml(v.title || "")}</div>
+          <div class="row"><span>高評価 ${fmt.format(v.like_count || 0)} / ${rateText(v.like_count, v.view_count)}</span><span>コメント ${fmt.format(v.comment_count || 0)} / ${rateText(v.comment_count, v.view_count)}</span></div>
           <div class="row"><span>${date}</span><span>${escapeHtml(v.video_id)}</span></div>
           <div class="badges">${badges}</div>
         </div>
@@ -355,6 +364,8 @@
       document.getElementById("detailMeta").innerHTML = [
         `チャンネル: ${escapeHtml(v.channel || "")}`,
         `視聴回数: ${fmt.format(v.view_count || 0)} 回`,
+        `高評価: ${fmt.format(v.like_count || 0)} / 高評価率 ${rateText(v.like_count, v.view_count)}`,
+        `コメント: ${fmt.format(v.comment_count || 0)} / コメント率 ${rateText(v.comment_count, v.view_count)}`,
         `公開日: ${escapeHtml((v.published_at || "").slice(0, 10) || "日付なし")}`,
         `更新日: ${escapeHtml(formatDateTime(v.fetched_at) || "不明")}`,
         `video_id: ${escapeHtml(v.video_id)}`
@@ -369,9 +380,17 @@
     }
 
     function downloadCsv(v, t) {
-      const row = [v.video_id, v.channel || "", v.title || "", v.youtube_url, preferredThumbnail(v), v.published_at || "", v.fetched_at || "", v.view_count || 0, t ? t.digest : ""];
-      const csv = ["video_id,channel,title,youtube_url,thumbnail_url,published_at,fetched_at,view_count,digest", row.map(csvCell).join(",")].join("\n");
+      const row = [v.video_id, v.channel || "", v.title || "", v.youtube_url, preferredThumbnail(v), v.published_at || "", v.fetched_at || "", v.view_count || 0, v.like_count || 0, v.comment_count || 0, rateText(v.like_count, v.view_count), rateText(v.comment_count, v.view_count), t ? t.digest : ""];
+      const csv = ["video_id,channel,title,youtube_url,thumbnail_url,published_at,fetched_at,view_count,like_count,comment_count,like_rate,comment_rate,digest", row.map(csvCell).join(",")].join("\n");
       downloadBlob(`${downloadBaseName(v)}.csv`, csv, "text/csv;charset=utf-8");
+    }
+
+    function rateValue(count, views) {
+      return views ? (Number(count || 0) / Number(views || 0)) : 0;
+    }
+
+    function rateText(count, views) {
+      return `${(rateValue(count, views) * 100).toFixed(2)}%`;
     }
 
     async function downloadThumbnail(v) {
