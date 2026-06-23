@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -26,6 +27,8 @@ THUMBNAIL_PREFIX = os.environ.get("THUMBNAIL_PREFIX", "senior_reading_thumbnails
 DOWNLOAD_THUMBNAILS = os.environ.get("DOWNLOAD_THUMBNAILS", "1") != "0"
 LIMIT = int(os.environ.get("LIMIT", "0"))
 SLEEP_SEC = float(os.environ.get("SLEEP_SEC", "0.1"))
+DISCOVER_RECENT_UPLOADS = os.environ.get("DISCOVER_RECENT_UPLOADS", "1") != "0"
+DISCOVERY_UPLOADS_PER_CHANNEL = int(os.environ.get("DISCOVERY_UPLOADS_PER_CHANNEL", "20"))
 
 
 def main() -> int:
@@ -41,14 +44,21 @@ def main() -> int:
     ensure_snapshot_table(client)
     ensure_thumbnail_asset_table(client)
     ids = fetch_target_video_ids(client)
+    discovered_ids: list[str] = []
+    discovery_errors: list[str] = []
+    key_index = 0
+    quota_skips = 0
+    if DISCOVER_RECENT_UPLOADS:
+        discovered_ids, discovery_quota_skips, key_index, discovery_errors = discover_recent_upload_video_ids(client, keys)
+        quota_skips += discovery_quota_skips
+        ids = dedupe(discovered_ids + ids)
     if LIMIT:
         ids = ids[:LIMIT]
 
     updated_rows = []
     missing = 0
-    quota_skips = 0
-    errors = []
-    key_index = 0
+    skipped_short = 0
+    errors = discovery_errors[:]
 
     for batch in chunks(ids, 50):
         data = None
@@ -76,7 +86,12 @@ def main() -> int:
             if not item:
                 missing += 1
                 continue
-            updated_rows.append(make_update_row(video_id, item, fetched_at))
+            row = make_update_row(video_id, item, fetched_at)
+            duration_sec = row.get("duration_sec")
+            if duration_sec is not None and duration_sec < 120:
+                skipped_short += 1
+                continue
+            updated_rows.append(row)
         time.sleep(SLEEP_SEC)
 
     if updated_rows:
@@ -95,8 +110,10 @@ def main() -> int:
             "started_at": started_at.isoformat(),
             "finished_at": finished_at.isoformat(),
             "target_count": len(ids),
+            "discovered_count": len(discovered_ids),
             "updated_count": len(updated_rows),
             "missing_count": missing,
+            "skipped_short_count": skipped_short,
             "quota_skips": quota_skips,
             "key_used": keys[key_index][0] if key_index < len(keys) else "",
             "thumbnail_checked": thumbnail_stats["checked"],
@@ -108,15 +125,17 @@ def main() -> int:
     print(json.dumps({
         "run_id": run_id,
         "target_count": len(ids),
+        "discovered_count": len(discovered_ids),
         "updated_count": len(updated_rows),
         "missing_count": missing,
+        "skipped_short_count": skipped_short,
         "quota_skips": quota_skips,
         "key_used": keys[key_index][0] if key_index < len(keys) else "",
         "thumbnail_checked": thumbnail_stats["checked"],
         "thumbnail_downloaded": thumbnail_stats["downloaded"],
         "thumbnail_failed": thumbnail_stats["failed"],
     }, ensure_ascii=False))
-    return 0 if not errors else 1
+    return 0 if updated_rows else 1
 
 
 def load_api_keys() -> list[tuple[str, str]]:
@@ -154,6 +173,110 @@ def fetch_target_video_ids(client: bigquery.Client) -> list[str]:
     return [row.video_id for row in client.query(sql).result()]
 
 
+def fetch_target_channels(client: bigquery.Client) -> list[str]:
+    sql = f"""
+    SELECT DISTINCT channel_id
+    FROM `{PROJECT_ID}.{DATASET}.{CHANNEL_TABLE}`
+    WHERE channel_id IS NOT NULL
+      AND channel_id != ''
+      AND sync_target = 'senior_reading'
+      AND COALESCE(include, 1) = 1
+      AND COALESCE(source_type, '') != 'original_kr'
+    ORDER BY channel_id
+    """
+    return [row.channel_id for row in client.query(sql).result()]
+
+
+def discover_recent_upload_video_ids(client: bigquery.Client, keys: list[tuple[str, str]]) -> tuple[list[str], int, int, list[str]]:
+    channel_ids = fetch_target_channels(client)
+    upload_playlist_ids: list[str] = []
+    quota_skips = 0
+    key_index = 0
+    errors: list[str] = []
+
+    for batch in chunks(channel_ids, 50):
+        data, key_index, skipped, error = fetch_youtube_json_with_keys(
+            keys,
+            key_index,
+            "channels",
+            {"part": "contentDetails", "id": ",".join(batch), "maxResults": "50"},
+        )
+        quota_skips += skipped
+        if error:
+            errors.append(error)
+            if key_index >= len(keys):
+                break
+            continue
+        for item in data.get("items", []):
+            uploads = (
+                item.get("contentDetails", {})
+                .get("relatedPlaylists", {})
+                .get("uploads", "")
+            )
+            if uploads:
+                upload_playlist_ids.append(uploads)
+        time.sleep(SLEEP_SEC)
+
+    video_ids: list[str] = []
+    for playlist_id in upload_playlist_ids:
+        data, key_index, skipped, error = fetch_youtube_json_with_keys(
+            keys,
+            key_index,
+            "playlistItems",
+            {
+                "part": "snippet",
+                "playlistId": playlist_id,
+                "maxResults": str(DISCOVERY_UPLOADS_PER_CHANNEL),
+            },
+        )
+        quota_skips += skipped
+        if error:
+            errors.append(error)
+            if key_index >= len(keys):
+                break
+            continue
+        for item in data.get("items", []):
+            video_id = (
+                item.get("snippet", {})
+                .get("resourceId", {})
+                .get("videoId", "")
+            )
+            if video_id:
+                video_ids.append(video_id)
+        time.sleep(SLEEP_SEC)
+
+    return dedupe(video_ids), quota_skips, key_index, errors
+
+
+def fetch_youtube_json_with_keys(
+    keys: list[tuple[str, str]],
+    key_index: int,
+    resource: str,
+    params: dict[str, str],
+) -> tuple[dict, int, int, str]:
+    quota_skips = 0
+    while key_index < len(keys):
+        _, key = keys[key_index]
+        try:
+            return fetch_youtube_resource(key, resource, params), key_index, quota_skips, ""
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "replace")
+            if e.code == 403 and "quotaExceeded" in body:
+                quota_skips += 1
+                key_index += 1
+                continue
+            return {}, key_index, quota_skips, f"{resource} HTTP {e.code}: {body[:300]}"
+    return {}, key_index, quota_skips, f"{resource}: all YouTube API keys appear to be quota-exceeded."
+
+
+def fetch_youtube_resource(api_key: str, resource: str, params: dict[str, str]) -> dict:
+    request_params = dict(params)
+    request_params["key"] = api_key
+    url = f"https://www.googleapis.com/youtube/v3/{resource}?" + urllib.parse.urlencode(request_params)
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def fetch_youtube_videos(api_key: str, ids: list[str]) -> dict:
     params = {
         "part": "snippet,statistics,contentDetails",
@@ -170,15 +293,20 @@ def make_update_row(video_id: str, item: dict, fetched_at: datetime) -> dict:
     snippet = item.get("snippet", {})
     stats = item.get("statistics", {})
     content = item.get("contentDetails", {})
+    duration = content.get("duration", "")
     return {
         "video_id": video_id,
+        "channel_id": snippet.get("channelId", ""),
         "title": snippet.get("title", ""),
         "published_at": snippet.get("publishedAt", ""),
         "view_count": int(stats.get("viewCount", 0) or 0),
         "like_count": int(stats.get("likeCount", 0) or 0),
         "comment_count": int(stats.get("commentCount", 0) or 0),
+        "description": snippet.get("description", ""),
+        "tags": json.dumps(snippet.get("tags", []), ensure_ascii=False),
         "thumbnail_url": best_thumbnail_url(snippet.get("thumbnails", {})),
-        "duration": content.get("duration", ""),
+        "duration": duration,
+        "duration_sec": parse_iso8601_duration_seconds(duration),
         "fetched_at": fetched_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -198,13 +326,17 @@ def merge_video_updates(client: bigquery.Client, rows: list[dict]) -> None:
         job_config=bigquery.LoadJobConfig(
             schema=[
                 bigquery.SchemaField("video_id", "STRING"),
+                bigquery.SchemaField("channel_id", "STRING"),
                 bigquery.SchemaField("title", "STRING"),
                 bigquery.SchemaField("published_at", "STRING"),
                 bigquery.SchemaField("view_count", "INT64"),
                 bigquery.SchemaField("like_count", "INT64"),
                 bigquery.SchemaField("comment_count", "INT64"),
+                bigquery.SchemaField("description", "STRING"),
+                bigquery.SchemaField("tags", "STRING"),
                 bigquery.SchemaField("thumbnail_url", "STRING"),
                 bigquery.SchemaField("duration", "STRING"),
+                bigquery.SchemaField("duration_sec", "FLOAT64"),
                 bigquery.SchemaField("fetched_at", "STRING"),
             ],
             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
@@ -221,9 +353,19 @@ def merge_video_updates(client: bigquery.Client, rows: list[dict]) -> None:
       view_count = S.view_count,
       like_count = S.like_count,
       comment_count = S.comment_count,
+      description = S.description,
+      tags = S.tags,
       thumbnail_url = COALESCE(NULLIF(S.thumbnail_url, ''), T.thumbnail_url),
       duration = S.duration,
+      duration_sec = S.duration_sec,
       fetched_at = S.fetched_at
+    WHEN NOT MATCHED THEN INSERT (
+      video_id, channel_id, title, published_at, view_count, like_count, comment_count,
+      description, tags, thumbnail_url, duration, duration_sec, fetched_at
+    ) VALUES (
+      S.video_id, S.channel_id, S.title, S.published_at, S.view_count, S.like_count, S.comment_count,
+      S.description, S.tags, S.thumbnail_url, S.duration, S.duration_sec, S.fetched_at
+    )
     """
     client.query(sql).result()
     client.delete_table(temp_table, not_found_ok=True)
@@ -419,8 +561,10 @@ def ensure_run_log_table(client: bigquery.Client) -> None:
             bigquery.SchemaField("started_at", "TIMESTAMP"),
             bigquery.SchemaField("finished_at", "TIMESTAMP"),
             bigquery.SchemaField("target_count", "INT64"),
+            bigquery.SchemaField("discovered_count", "INT64"),
             bigquery.SchemaField("updated_count", "INT64"),
             bigquery.SchemaField("missing_count", "INT64"),
+            bigquery.SchemaField("skipped_short_count", "INT64"),
             bigquery.SchemaField("quota_skips", "INT64"),
             bigquery.SchemaField("key_used", "STRING"),
             bigquery.SchemaField("thumbnail_checked", "INT64"),
@@ -437,6 +581,8 @@ def ensure_run_log_table(client: bigquery.Client) -> None:
             ("thumbnail_checked", "INT64"),
             ("thumbnail_downloaded", "INT64"),
             ("thumbnail_failed", "INT64"),
+            ("discovered_count", "INT64"),
+            ("skipped_short_count", "INT64"),
         ],
     )
 
@@ -508,6 +654,32 @@ def chunks(values: list[str], size: int):
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def dedupe(values: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def parse_iso8601_duration_seconds(value: str) -> float | None:
+    if not value:
+        return None
+    match = re.fullmatch(
+        r"P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?",
+        value,
+    )
+    if not match:
+        return None
+    days = int(match.group("days") or 0)
+    hours = int(match.group("hours") or 0)
+    minutes = int(match.group("minutes") or 0)
+    seconds = int(match.group("seconds") or 0)
+    return float(days * 86400 + hours * 3600 + minutes * 60 + seconds)
 
 
 if __name__ == "__main__":
