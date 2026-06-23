@@ -4,3 +4,4 @@ bq_sync_export/
 __pycache__/
 *.pyc
 *.log
+logs/
