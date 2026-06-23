@@ -15,15 +15,28 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=100)
     ap.add_argument("--update-youtube", action="store_true")
     ap.add_argument("--deploy", action="store_true")
+    ap.add_argument("--from-bq", action="store_true")
     args = ap.parse_args()
 
-    if args.update_youtube:
+    if args.from_bq:
+        cmd = [sys.executable, "generate_portal_data_from_bq.py"]
+        if args.limit:
+            cmd.extend(["--limit", str(args.limit)])
+        run(cmd)
+    elif args.update_youtube:
         run([sys.executable, "update_youtube_metadata.py", "--limit", str(args.limit)])
-    run([sys.executable, "download_best_thumbnails.py", "--limit", str(args.limit), "--sleep", "0.05"])
-    run(["uv", "run", "--with", "google-genai", "python", "ocr_thumbnail_text.py", "--engine", "gemini", "--limit", str(args.limit), "--sleep", "0.5"])
-    run([sys.executable, "generate_portal_data.py"])
+        run([sys.executable, "download_best_thumbnails.py", "--limit", str(args.limit), "--sleep", "0.05"])
+        run(["uv", "run", "--with", "google-genai", "python", "ocr_thumbnail_text.py", "--engine", "gemini", "--limit", str(args.limit), "--sleep", "0.5"])
+        run([sys.executable, "generate_portal_data.py"])
+    else:
+        run([sys.executable, "download_best_thumbnails.py", "--limit", str(args.limit), "--sleep", "0.05"])
+        run(["uv", "run", "--with", "google-genai", "python", "ocr_thumbnail_text.py", "--engine", "gemini", "--limit", str(args.limit), "--sleep", "0.5"])
+        run([sys.executable, "generate_portal_data.py"])
     if args.deploy:
-        run([sys.executable, "deploy_pages.py"])
+        deploy_cmd = [sys.executable, "deploy_pages.py"]
+        if args.from_bq:
+            deploy_cmd.append("--from-bq")
+        run(deploy_cmd)
     return 0
 
 
