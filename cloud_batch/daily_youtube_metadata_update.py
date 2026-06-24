@@ -29,6 +29,7 @@ LIMIT = int(os.environ.get("LIMIT", "0"))
 SLEEP_SEC = float(os.environ.get("SLEEP_SEC", "0.1"))
 DISCOVER_RECENT_UPLOADS = os.environ.get("DISCOVER_RECENT_UPLOADS", "1") != "0"
 DISCOVERY_UPLOADS_PER_CHANNEL = int(os.environ.get("DISCOVERY_UPLOADS_PER_CHANNEL", "20"))
+TARGET_CHANNEL_IDS = [v.strip() for v in os.environ.get("TARGET_CHANNEL_IDS", "").split(",") if v.strip()]
 
 
 def main() -> int:
@@ -168,9 +169,18 @@ def fetch_target_video_ids(client: bigquery.Client) -> list[str]:
       AND COALESCE(c.include, 1) = 1
       AND COALESCE(c.source_type, '') != 'original_kr'
       AND (v.duration_sec IS NULL OR v.duration_sec >= 120)
+      AND (
+        ARRAY_LENGTH(@target_channel_ids) = 0
+        OR v.channel_id IN UNNEST(@target_channel_ids)
+      )
     ORDER BY COALESCE(v.view_count, 0) DESC
     """
-    return [row.video_id for row in client.query(sql).result()]
+    config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS),
+        ]
+    )
+    return [row.video_id for row in client.query(sql, job_config=config).result()]
 
 
 def fetch_target_channels(client: bigquery.Client) -> list[str]:
@@ -182,9 +192,18 @@ def fetch_target_channels(client: bigquery.Client) -> list[str]:
       AND sync_target = 'senior_reading'
       AND COALESCE(include, 1) = 1
       AND COALESCE(source_type, '') != 'original_kr'
+      AND (
+        ARRAY_LENGTH(@target_channel_ids) = 0
+        OR channel_id IN UNNEST(@target_channel_ids)
+      )
     ORDER BY channel_id
     """
-    return [row.channel_id for row in client.query(sql).result()]
+    config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS),
+        ]
+    )
+    return [row.channel_id for row in client.query(sql, job_config=config).result()]
 
 
 def discover_recent_upload_video_ids(client: bigquery.Client, keys: list[tuple[str, str]]) -> tuple[list[str], int, int, list[str]]:
