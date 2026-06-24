@@ -7,13 +7,14 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: #151515;
-      --panel: #222;
-      --panel2: #2b2b2b;
+      --bg: #0f0f0f;
+      --panel: #1f1f1f;
+      --panel2: #272727;
       --text: #f2f2f2;
-      --muted: #a8a8a8;
-      --line: #3b3b3b;
-      --accent: #38a169;
+      --muted: #aaa;
+      --line: #3f3f3f;
+      --accent: #ff4e45;
+      --accent2: #3ea6ff;
       --warn: #d69e2e;
     }
     * { box-sizing: border-box; }
@@ -28,31 +29,44 @@
       position: sticky;
       top: 0;
       z-index: 10;
-      background: rgba(21, 21, 21, .96);
+      background: rgba(15, 15, 15, .97);
       border-bottom: 1px solid var(--line);
-      padding: 14px 18px 12px;
+      padding: 12px 18px 10px;
     }
     h1 {
-      margin: 0 0 10px;
+      margin: 0 0 12px;
       font-size: 18px;
       font-weight: 700;
       letter-spacing: 0;
     }
-    .controls {
+    .searchbar {
       display: grid;
-      grid-template-columns: minmax(240px, 1fr) repeat(4, max-content);
-      gap: 10px;
+      grid-template-columns: minmax(260px, 1fr) auto;
+      gap: 8px;
       align-items: end;
+      max-width: 920px;
+    }
+    .filters {
+      display: grid;
+      grid-template-columns: minmax(180px, 1.2fr) minmax(150px, .65fr) minmax(130px, .55fr) minmax(130px, .55fr) minmax(150px, .7fr) minmax(190px, .75fr);
+      gap: 8px;
+      align-items: end;
+      margin-top: 10px;
     }
     label { color: var(--muted); font-size: 12px; display: grid; gap: 5px; }
     input, select, button {
       min-height: 34px;
       border: 1px solid var(--line);
-      border-radius: 4px;
+      border-radius: 6px;
       background: var(--panel2);
       color: var(--text);
-      padding: 6px 9px;
+      padding: 6px 10px;
       font: inherit;
+    }
+    input[type="search"] {
+      border-radius: 18px;
+      padding-left: 14px;
+      background: #212121;
     }
     button {
       background: var(--accent);
@@ -60,32 +74,50 @@
       color: #fff;
       cursor: pointer;
       font-weight: 700;
+      border-radius: 18px;
+      padding-inline: 18px;
     }
-    .checks {
+    .filter-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px 14px;
+      gap: 8px;
       margin-top: 10px;
       color: var(--text);
+      align-items: center;
     }
-    .checks label {
+    .filter-row label {
       display: inline-flex;
       grid-template-columns: none;
       gap: 6px;
       align-items: center;
       font-size: 13px;
       color: var(--text);
+      min-height: 30px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #202020;
     }
-    .checks input { min-height: auto; }
+    .filter-row input { min-height: auto; }
+    .filter-group-label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-right: 2px;
+    }
+    .views-range {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
     .status {
-      margin-top: 8px;
+      margin-top: 10px;
       color: var(--muted);
       font-size: 12px;
     }
     main { padding: 16px 18px 32px; }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(292px, 1fr));
       gap: 10px;
     }
     .card {
@@ -96,6 +128,7 @@
       cursor: pointer;
       min-width: 0;
     }
+    .card:hover { border-color: #686868; background: #242424; }
     .card img {
       width: 100%;
       aspect-ratio: 16 / 9;
@@ -103,17 +136,63 @@
       display: block;
       background: #111;
     }
-    .meta { padding: 8px; display: grid; gap: 5px; }
-    .row { display: flex; gap: 8px; justify-content: space-between; color: var(--muted); font-size: 12px; }
+    .meta { padding: 8px 9px 9px; display: grid; gap: 6px; }
+    .primary-meta {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: baseline;
+    }
+    .channel-name {
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .view-count {
+      color: var(--accent2);
+      font-size: 15px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .metric {
+      min-width: 0;
+      padding: 5px 6px;
+      border-radius: 6px;
+      background: #181818;
+      border: 1px solid #303030;
+    }
+    .metric-label {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.1;
+      margin-bottom: 3px;
+    }
+    .metric-value {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .title {
       line-height: 1.45;
-      min-height: 40px;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
-    .badges { display: flex; gap: 4px; flex-wrap: wrap; min-height: 20px; }
+    .badges { display: flex; gap: 4px; flex-wrap: wrap; }
     .badge {
       border: 1px solid var(--line);
       border-radius: 999px;
@@ -168,8 +247,9 @@
       font-weight: 700;
     }
     @media (max-width: 760px) {
-      .controls { grid-template-columns: 1fr 1fr; }
-      .controls label:first-child { grid-column: 1 / -1; }
+      .searchbar { grid-template-columns: 1fr; }
+      .filters { grid-template-columns: 1fr 1fr; }
+      .filter-sort { grid-column: 1 / -1; }
       .detail { grid-template-columns: 1fr; }
     }
   </style>
@@ -177,39 +257,54 @@
 <body>
   <header>
     <h1>企画リサーチ</h1>
-    <div class="controls">
+    <div class="searchbar">
       <label>検索語
         <input id="q" type="search" placeholder="例: 双子 ボロボロ 食堂">
       </label>
+      <button id="searchBtn" type="button">キーワード検索</button>
+    </div>
+    <div class="filters">
       <label>チャンネル
         <select id="channel"></select>
       </label>
       <label>視聴回数
-        <input id="minViews" type="number" min="0" step="10000" value="0">
+        <div class="views-range">
+          <input id="minViews" type="number" min="0" step="10000" placeholder="以上">
+          <input id="maxViews" type="number" min="0" step="10000" placeholder="以下">
+        </div>
       </label>
       <label>公開日以降
         <input id="dateFrom" type="date">
       </label>
-      <label>並び替え
+      <label>公開日以前
+        <input id="dateTo" type="date">
+      </label>
+      <label>サムネOCR
+        <select id="thumbnailTextStatus">
+          <option value="">すべて</option>
+          <option value="ready">サムネ文字あり</option>
+          <option value="missing">サムネ文字未整備</option>
+        </select>
+      </label>
+      <label class="filter-sort">並び替え
         <select id="sort">
+          <option value="date_desc" selected>公開日が新しい順</option>
           <option value="views_desc">視聴回数が多い順</option>
           <option value="likes_desc">高評価が多い順</option>
           <option value="comments_desc">コメントが多い順</option>
           <option value="like_rate_desc">高評価率が高い順</option>
           <option value="comment_rate_desc">コメント率が高い順</option>
-          <option value="date_desc">公開日が新しい順</option>
           <option value="date_asc">公開日が古い順</option>
           <option value="relevance">関連度順</option>
         </select>
       </label>
     </div>
-    <div class="checks">
+    <div class="filter-row">
+      <span class="filter-group-label">検索対象</span>
       <label><input type="checkbox" id="fieldThumbnail" checked> サムネ文字</label>
       <label><input type="checkbox" id="fieldTitle" checked> タイトル</label>
       <label><input type="checkbox" id="fieldTags" checked> タグ</label>
       <label><input type="checkbox" id="matchAll" checked> すべての語を含む</label>
-      <label><input type="checkbox" id="missingThumbnailTextOnly"> サムネ文字未整備のみ</label>
-      <button id="searchBtn" type="button">検索</button>
     </div>
     <div class="status" id="status"></div>
   </header>
@@ -268,7 +363,14 @@
       const channels = [...counts.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, "ja"));
       channelSelect.innerHTML = '<option value="">すべて</option>' + channels.map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)} (${counts.get(c)})</option>`).join("");
       document.getElementById("searchBtn").addEventListener("click", render);
+      document.getElementById("q").addEventListener("input", debounce(render, 250));
       document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") render(); });
+      document.querySelectorAll("select, input[type='date'], input[type='number'], input[type='checkbox']").forEach(el => {
+        el.addEventListener("change", render);
+      });
+      document.querySelectorAll("input[type='date'], input[type='number']").forEach(el => {
+        el.addEventListener("input", debounce(render, 250));
+      });
       document.getElementById("closeBtn").addEventListener("click", () => document.getElementById("dialog").close());
       render();
     }
@@ -280,9 +382,11 @@
       const matchAll = document.getElementById("matchAll").checked;
       const channel = channelSelect.value;
       const minViews = Number(document.getElementById("minViews").value || 0);
+      const maxViews = Number(document.getElementById("maxViews").value || 0);
       const dateFrom = document.getElementById("dateFrom").value;
+      const dateTo = document.getElementById("dateTo").value;
       const sort = document.getElementById("sort").value;
-      const missingThumbnailTextOnly = document.getElementById("missingThumbnailTextOnly").checked;
+      const thumbnailTextStatus = document.getElementById("thumbnailTextStatus").value;
 
       let rows = videos.map(v => {
         const hit = hitInfo(v, terms, fields, matchAll);
@@ -290,8 +394,11 @@
       }).filter(({ v, hit }) => {
         if (channel && v.channel !== channel) return false;
         if ((v.view_count || 0) < minViews) return false;
+        if (maxViews && (v.view_count || 0) > maxViews) return false;
         if (dateFrom && (!v.published_at || v.published_at.slice(0, 10) < dateFrom)) return false;
-        if (missingThumbnailTextOnly && (v.thumbnail_text || "").trim()) return false;
+        if (dateTo && (!v.published_at || v.published_at.slice(0, 10) > dateTo)) return false;
+        if (thumbnailTextStatus === "ready" && !(v.thumbnail_text || "").trim()) return false;
+        if (thumbnailTextStatus === "missing" && (v.thumbnail_text || "").trim()) return false;
         if (terms.length && !hit.ok) return false;
         return true;
       });
@@ -345,10 +452,16 @@
       return `<article class="card" data-idx="${idx}">
         <img src="${escapeAttr(preferredThumbnail(v))}" alt="" loading="lazy" onerror="fallbackImage(this, ${idx})">
         <div class="meta">
-          <div class="row"><span>${escapeHtml(v.channel || "")}</span><span>${fmt.format(v.view_count || 0)} 回</span></div>
+          <div class="primary-meta">
+            <span class="channel-name">${escapeHtml(v.channel || "")}</span>
+            <span class="view-count">${fmt.format(v.view_count || 0)} 回</span>
+          </div>
           <div class="title">${escapeHtml(v.title || "")}</div>
-          <div class="row"><span>高評価 ${fmt.format(v.like_count || 0)} / ${rateText(v.like_count, v.view_count)}</span><span>コメント ${fmt.format(v.comment_count || 0)} / ${rateText(v.comment_count, v.view_count)}</span></div>
-          <div class="row"><span>${date}</span><span>${escapeHtml(v.video_id)}</span></div>
+          <div class="metrics">
+            <div class="metric"><span class="metric-label">公開日</span><span class="metric-value">${date}</span></div>
+            <div class="metric"><span class="metric-label">高評価</span><span class="metric-value">${fmt.format(v.like_count || 0)} / ${rateText(v.like_count, v.view_count)}</span></div>
+            <div class="metric"><span class="metric-label">コメント</span><span class="metric-value">${fmt.format(v.comment_count || 0)} / ${rateText(v.comment_count, v.view_count)}</span></div>
+          </div>
           <div class="badges">${badges}</div>
         </div>
       </article>`;
@@ -367,8 +480,7 @@
         `高評価: ${fmt.format(v.like_count || 0)} / 高評価率 ${rateText(v.like_count, v.view_count)}`,
         `コメント: ${fmt.format(v.comment_count || 0)} / コメント率 ${rateText(v.comment_count, v.view_count)}`,
         `公開日: ${escapeHtml((v.published_at || "").slice(0, 10) || "日付なし")}`,
-        `更新日: ${escapeHtml(formatDateTime(v.fetched_at) || "不明")}`,
-        `video_id: ${escapeHtml(v.video_id)}`
+        `更新日: ${escapeHtml(formatDateTime(v.fetched_at) || "不明")}`
       ].map(x => `<div>${x}</div>`).join("");
       document.getElementById("detailThumbnailText").textContent = v.thumbnail_text || "未整備";
       document.getElementById("detailScriptText").textContent = t ? t.digest + (t.chars > t.digest.length ? `\n\n... (${fmt.format(t.chars)}文字中、冒頭${fmt.format(t.digest.length)}文字)` : "") : "未取得";
@@ -466,6 +578,14 @@
       return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     }
     function escapeAttr(value) { return escapeHtml(value); }
+
+    function debounce(fn, wait) {
+      let timer = 0;
+      return (...args) => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => fn(...args), wait);
+      };
+    }
 
     init();
   </script>
