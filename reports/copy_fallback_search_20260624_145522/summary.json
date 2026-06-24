@@ -1,0 +1,11 @@
+{
+  "searched_source_videos": 45,
+  "candidate_rows": 28,
+  "candidate_channels": 11,
+  "min_score": 0.7,
+  "max_results_per_title": 8,
+  "target_csv": "E:\\Data\\ObsidianVault\\02_Channels\\シニア朗読\\競合リサーチ\\サムネ企画検索ポータル_20260605\\reports\\copy_fallback_search_20260624_145522\\copy_fallback_source_targets.csv",
+  "candidates_csv": "E:\\Data\\ObsidianVault\\02_Channels\\シニア朗読\\競合リサーチ\\サムネ企画検索ポータル_20260605\\reports\\copy_fallback_search_20260624_145522\\copy_fallback_candidates.csv",
+  "summary_csv": "E:\\Data\\ObsidianVault\\02_Channels\\シニア朗読\\競合リサーチ\\サムネ企画検索ポータル_20260605\\reports\\copy_fallback_search_20260624_145522\\copy_fallback_candidate_channels.csv",
+  "log_csv": "E:\\Data\\ObsidianVault\\02_Channels\\シニア朗読\\競合リサーチ\\サムネ企画検索ポータル_20260605\\reports\\copy_fallback_search_20260624_145522\\copy_fallback_search_log.csv"
+}
