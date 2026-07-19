@@ -2,10 +2,10 @@
   "source": "bigquery",
   "project_id": "rugged-destiny-408613",
   "dataset": "senior_reading_all",
-  "videos": 3499,
+  "videos": 3503,
   "videos_with_thumbnail_text": 1893,
-  "videos_missing_thumbnail_text": 1606,
-  "videos_with_gcs_thumbnail": 2159,
+  "videos_missing_thumbnail_text": 1610,
+  "videos_with_gcs_thumbnail": 2163,
   "transcripts_light": 2510,
   "transcript_digest_chars_per_video": 1600
 }
