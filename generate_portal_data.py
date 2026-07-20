@@ -25,10 +25,19 @@ def main() -> int:
     con = sqlite3.connect(str(DB_PATH))
     con.row_factory = sqlite3.Row
 
-    channel_names = {
-        r["channel_id"]: r["channel_name"] or r["channel_name_ja"] or r["handle"] or r["channel_id"]
+    channel_meta = {
+        r["channel_id"]: {
+            "name": r["channel_name"] or r["channel_name_ja"] or r["handle"] or r["channel_id"],
+            "group": r["channel_group"] or "",
+            "group_role": r["group_role"] or "",
+            "group_parent_channel_id": r["group_parent_channel_id"] or "",
+        }
         for r in con.execute(
-            "SELECT channel_id, channel_name, channel_name_ja, handle FROM channels"
+            """
+            SELECT channel_id, channel_name, channel_name_ja, handle,
+                   channel_group, group_role, group_parent_channel_id
+            FROM channels
+            """
         )
     }
     thumbnail_text = {
@@ -88,6 +97,15 @@ def main() -> int:
 
     for r in rows:
         vid = r["video_id"]
+        meta = channel_meta.get(
+            r["channel_id"],
+            {
+                "name": r["channel_id"] or "",
+                "group": "",
+                "group_role": "",
+                "group_parent_channel_id": "",
+            },
+        )
         raw_tags = parse_tags(r["tags"])
         analysis_tags = unique(tag_map.get(vid, []))
         thumb_analysis = analysis_map.get(vid, {})
@@ -97,7 +115,10 @@ def main() -> int:
         item = {
             "video_id": vid,
             "channel_id": r["channel_id"],
-            "channel": channel_names.get(r["channel_id"], r["channel_id"] or ""),
+            "channel": meta["name"],
+            "channel_group": meta["group"],
+            "group_role": meta["group_role"],
+            "group_parent_channel_id": meta["group_parent_channel_id"],
             "title": r["title"] or "",
             "published_at": r["published_at"] or "",
             "duration_sec": r["duration_sec"],

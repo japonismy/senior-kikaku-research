@@ -14,6 +14,7 @@ Created: 2026-06-05
 
 ## 絞り込み・並び替え
 
+- 系列
 - チャンネル
 - 視聴回数
 - 公開日以降
@@ -37,6 +38,9 @@ Created: 2026-06-05
 - `channels.include = 1`
 - `channels.source_type != original_kr`
 - `videos.duration_sec >= 120` または長さ不明
+
+系列チャンネルは `channels.channel_group`、`group_role`、
+`group_parent_channel_id` で管理し、ポータルの「系列」から横断表示する。
 
 `genre_tag` の `短尺_...` はチャンネル分類として使われているため、ショート除外条件には使わない。
 

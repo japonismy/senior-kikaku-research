@@ -48,10 +48,21 @@
     }
     .filters {
       display: grid;
-      grid-template-columns: minmax(180px, 1.2fr) minmax(150px, .65fr) minmax(130px, .55fr) minmax(130px, .55fr) minmax(150px, .7fr) minmax(190px, .75fr);
+      grid-template-columns: minmax(160px, .8fr) minmax(180px, 1fr) minmax(210px, 1.1fr) minmax(130px, .65fr) minmax(130px, .65fr) minmax(150px, .75fr) minmax(190px, .9fr);
       gap: 8px;
       align-items: end;
       margin-top: 10px;
+    }
+    .filters > label,
+    .searchbar > label,
+    .views-range {
+      min-width: 0;
+    }
+    .filters input,
+    .filters select,
+    .searchbar input {
+      width: 100%;
+      min-width: 0;
     }
     label { color: var(--muted); font-size: 12px; display: grid; gap: 5px; }
     input, select, button {
@@ -202,6 +213,7 @@
     }
     .badge.hit { color: #fff; border-color: var(--accent); background: rgba(56,161,105,.18); }
     .badge.warn { color: #fff; border-color: var(--warn); background: rgba(214,158,46,.18); }
+    .badge.group { color: #fff; border-color: #4c8bf5; background: rgba(76,139,245,.18); }
     dialog {
       width: min(980px, calc(100vw - 28px));
       border: 1px solid var(--line);
@@ -248,7 +260,7 @@
     }
     @media (max-width: 760px) {
       .searchbar { grid-template-columns: 1fr; }
-      .filters { grid-template-columns: 1fr 1fr; }
+      .filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
       .filter-sort { grid-column: 1 / -1; }
       .detail { grid-template-columns: 1fr; }
     }
@@ -264,6 +276,9 @@
       <button id="searchBtn" type="button">キーワード検索</button>
     </div>
     <div class="filters">
+      <label>系列
+        <select id="channelGroup"></select>
+      </label>
       <label>チャンネル
         <select id="channel"></select>
       </label>
@@ -355,13 +370,20 @@
     const grid = document.getElementById("grid");
     const status = document.getElementById("status");
     const channelSelect = document.getElementById("channel");
+    const channelGroupSelect = document.getElementById("channelGroup");
     const fmt = new Intl.NumberFormat("ja-JP");
 
     function init() {
       const counts = new Map();
+      const groupCounts = new Map();
       videos.forEach(v => counts.set(v.channel, (counts.get(v.channel) || 0) + 1));
+      videos.forEach(v => {
+        if (v.channel_group) groupCounts.set(v.channel_group, (groupCounts.get(v.channel_group) || 0) + 1);
+      });
       const channels = [...counts.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b, "ja"));
+      const groups = [...groupCounts.keys()].sort((a, b) => a.localeCompare(b, "ja"));
       channelSelect.innerHTML = '<option value="">すべて</option>' + channels.map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)} (${counts.get(c)})</option>`).join("");
+      channelGroupSelect.innerHTML = '<option value="">すべて</option>' + groups.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)} (${groupCounts.get(g)})</option>`).join("");
       document.getElementById("searchBtn").addEventListener("click", render);
       document.getElementById("q").addEventListener("input", debounce(render, 250));
       document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") render(); });
@@ -381,6 +403,7 @@
       const fields = selectedFields();
       const matchAll = document.getElementById("matchAll").checked;
       const channel = channelSelect.value;
+      const channelGroup = channelGroupSelect.value;
       const minViews = Number(document.getElementById("minViews").value || 0);
       const maxViews = Number(document.getElementById("maxViews").value || 0);
       const dateFrom = document.getElementById("dateFrom").value;
@@ -392,6 +415,7 @@
         const hit = hitInfo(v, terms, fields, matchAll);
         return { v, hit };
       }).filter(({ v, hit }) => {
+        if (channelGroup && v.channel_group !== channelGroup) return false;
         if (channel && v.channel !== channel) return false;
         if ((v.view_count || 0) < minViews) return false;
         if (maxViews && (v.view_count || 0) > maxViews) return false;
@@ -446,9 +470,12 @@
     function cardHtml(v, hit) {
       const idx = videos.indexOf(v);
       const date = (v.published_at || "").slice(0, 10) || "日付なし";
-      const badges = hit.fields.length
+      const groupBadge = v.channel_group
+        ? `<span class="badge group">${escapeHtml(v.channel_group)}</span>`
+        : "";
+      const badges = groupBadge + (hit.fields.length
         ? hit.fields.map(x => `<span class="badge hit">${escapeHtml(x)}</span>`).join("")
-        : (v.thumbnail_text ? "" : '<span class="badge warn">サムネ文字未整備</span>');
+        : (v.thumbnail_text ? "" : '<span class="badge warn">サムネ文字未整備</span>'));
       return `<article class="card" data-idx="${idx}">
         <img src="${escapeAttr(preferredThumbnail(v))}" alt="" loading="lazy" onerror="fallbackImage(this, ${idx})">
         <div class="meta">
@@ -476,6 +503,7 @@
       document.getElementById("youtubeLink").href = v.youtube_url;
       document.getElementById("detailMeta").innerHTML = [
         `チャンネル: ${escapeHtml(v.channel || "")}`,
+        ...(v.channel_group ? [`系列: ${escapeHtml(v.channel_group)}`] : []),
         `視聴回数: ${fmt.format(v.view_count || 0)} 回`,
         `高評価: ${fmt.format(v.like_count || 0)} / 高評価率 ${rateText(v.like_count, v.view_count)}`,
         `コメント: ${fmt.format(v.comment_count || 0)} / コメント率 ${rateText(v.comment_count, v.view_count)}`,
@@ -492,8 +520,8 @@
     }
 
     function downloadCsv(v, t) {
-      const row = [v.video_id, v.channel || "", v.title || "", v.youtube_url, preferredThumbnail(v), v.published_at || "", v.fetched_at || "", v.view_count || 0, v.like_count || 0, v.comment_count || 0, rateText(v.like_count, v.view_count), rateText(v.comment_count, v.view_count), t ? t.digest : ""];
-      const csv = ["video_id,channel,title,youtube_url,thumbnail_url,published_at,fetched_at,view_count,like_count,comment_count,like_rate,comment_rate,digest", row.map(csvCell).join(",")].join("\n");
+      const row = [v.video_id, v.channel || "", v.channel_group || "", v.group_role || "", v.title || "", v.youtube_url, preferredThumbnail(v), v.published_at || "", v.fetched_at || "", v.view_count || 0, v.like_count || 0, v.comment_count || 0, rateText(v.like_count, v.view_count), rateText(v.comment_count, v.view_count), t ? t.digest : ""];
+      const csv = ["video_id,channel,channel_group,group_role,title,youtube_url,thumbnail_url,published_at,fetched_at,view_count,like_count,comment_count,like_rate,comment_rate,digest", row.map(csvCell).join(",")].join("\n");
       downloadBlob(`${downloadBaseName(v)}.csv`, csv, "text/csv;charset=utf-8");
     }
 
