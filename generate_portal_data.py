@@ -31,11 +31,12 @@ def main() -> int:
             "group": r["channel_group"] or "",
             "group_role": r["group_role"] or "",
             "group_parent_channel_id": r["group_parent_channel_id"] or "",
+            "genre_tag": r["genre_tag"] or "",
         }
         for r in con.execute(
             """
             SELECT channel_id, channel_name, channel_name_ja, handle,
-                   channel_group, group_role, group_parent_channel_id
+                   channel_group, group_role, group_parent_channel_id, genre_tag
             FROM channels
             """
         )
@@ -104,6 +105,7 @@ def main() -> int:
                 "group": "",
                 "group_role": "",
                 "group_parent_channel_id": "",
+                "genre_tag": "",
             },
         )
         raw_tags = parse_tags(r["tags"])
@@ -119,6 +121,7 @@ def main() -> int:
             "channel_group": meta["group"],
             "group_role": meta["group_role"],
             "group_parent_channel_id": meta["group_parent_channel_id"],
+            "genre_tag": meta["genre_tag"],
             "title": r["title"] or "",
             "published_at": r["published_at"] or "",
             "duration_sec": r["duration_sec"],

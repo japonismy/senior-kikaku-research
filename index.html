@@ -214,6 +214,8 @@
     .badge.hit { color: #fff; border-color: var(--accent); background: rgba(56,161,105,.18); }
     .badge.warn { color: #fff; border-color: var(--warn); background: rgba(214,158,46,.18); }
     .badge.group { color: #fff; border-color: #4c8bf5; background: rgba(76,139,245,.18); }
+    .badge.kando { color: #fff; border-color: #d56aa0; background: rgba(213,106,160,.2); }
+    .badge.sukatto { color: #fff; border-color: #4db6ac; background: rgba(77,182,172,.2); }
     dialog {
       width: min(980px, calc(100vw - 28px));
       border: 1px solid var(--line);
@@ -315,6 +317,11 @@
       </label>
     </div>
     <div class="filter-row">
+      <span class="filter-group-label">ジャンル</span>
+      <label><input type="checkbox" id="genreKando" checked> 感動</label>
+      <label><input type="checkbox" id="genreSukatto"> スカッと</label>
+    </div>
+    <div class="filter-row">
       <span class="filter-group-label">検索対象</span>
       <label><input type="checkbox" id="fieldThumbnail" checked> サムネ文字</label>
       <label><input type="checkbox" id="fieldTitle" checked> タイトル</label>
@@ -410,11 +417,17 @@
       const dateTo = document.getElementById("dateTo").value;
       const sort = document.getElementById("sort").value;
       const thumbnailTextStatus = document.getElementById("thumbnailTextStatus").value;
+      const genreKando = document.getElementById("genreKando").checked;
+      const genreSukatto = document.getElementById("genreSukatto").checked;
 
       let rows = videos.map(v => {
         const hit = hitInfo(v, terms, fields, matchAll);
         return { v, hit };
       }).filter(({ v, hit }) => {
+        const genre = genreCategory(v);
+        if (genre === "kando" && !genreKando) return false;
+        if (genre === "sukatto" && !genreSukatto) return false;
+        if (genre !== "kando" && genre !== "sukatto") return false;
         if (channelGroup && v.channel_group !== channelGroup) return false;
         if (channel && v.channel !== channel) return false;
         if ((v.view_count || 0) < minViews) return false;
@@ -470,10 +483,14 @@
     function cardHtml(v, hit) {
       const idx = videos.indexOf(v);
       const date = (v.published_at || "").slice(0, 10) || "日付なし";
+      const genre = genreCategory(v);
+      const genreBadge = genre
+        ? `<span class="badge ${genre}">${genre === "kando" ? "感動" : "スカッと"}</span>`
+        : "";
       const groupBadge = v.channel_group
         ? `<span class="badge group">${escapeHtml(v.channel_group)}</span>`
         : "";
-      const badges = groupBadge + (hit.fields.length
+      const badges = genreBadge + groupBadge + (hit.fields.length
         ? hit.fields.map(x => `<span class="badge hit">${escapeHtml(x)}</span>`).join("")
         : (v.thumbnail_text ? "" : '<span class="badge warn">サムネ文字未整備</span>'));
       return `<article class="card" data-idx="${idx}">
@@ -503,6 +520,7 @@
       document.getElementById("youtubeLink").href = v.youtube_url;
       document.getElementById("detailMeta").innerHTML = [
         `チャンネル: ${escapeHtml(v.channel || "")}`,
+        `ジャンル: ${genreCategory(v) === "kando" ? "感動" : genreCategory(v) === "sukatto" ? "スカッと" : "参考"}`,
         ...(v.channel_group ? [`系列: ${escapeHtml(v.channel_group)}`] : []),
         `視聴回数: ${fmt.format(v.view_count || 0)} 回`,
         `高評価: ${fmt.format(v.like_count || 0)} / 高評価率 ${rateText(v.like_count, v.view_count)}`,
@@ -520,9 +538,16 @@
     }
 
     function downloadCsv(v, t) {
-      const row = [v.video_id, v.channel || "", v.channel_group || "", v.group_role || "", v.title || "", v.youtube_url, preferredThumbnail(v), v.published_at || "", v.fetched_at || "", v.view_count || 0, v.like_count || 0, v.comment_count || 0, rateText(v.like_count, v.view_count), rateText(v.comment_count, v.view_count), t ? t.digest : ""];
-      const csv = ["video_id,channel,channel_group,group_role,title,youtube_url,thumbnail_url,published_at,fetched_at,view_count,like_count,comment_count,like_rate,comment_rate,digest", row.map(csvCell).join(",")].join("\n");
+      const row = [v.video_id, v.channel || "", genreCategory(v), v.genre_tag || "", v.channel_group || "", v.group_role || "", v.title || "", v.youtube_url, preferredThumbnail(v), v.published_at || "", v.fetched_at || "", v.view_count || 0, v.like_count || 0, v.comment_count || 0, rateText(v.like_count, v.view_count), rateText(v.comment_count, v.view_count), t ? t.digest : ""];
+      const csv = ["video_id,channel,genre,genre_tag,channel_group,group_role,title,youtube_url,thumbnail_url,published_at,fetched_at,view_count,like_count,comment_count,like_rate,comment_rate,digest", row.map(csvCell).join(",")].join("\n");
       downloadBlob(`${downloadBaseName(v)}.csv`, csv, "text/csv;charset=utf-8");
+    }
+
+    function genreCategory(v) {
+      const tag = String(v.genre_tag || "");
+      if (tag.includes("感動スカッと")) return "sukatto";
+      if (tag.includes("純感動")) return "kando";
+      return "";
     }
 
     function rateValue(count, views) {
