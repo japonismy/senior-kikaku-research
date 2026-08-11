@@ -3,7 +3,7 @@
 This portal can refresh from BigQuery and publish to GitHub Pages with:
 
 ```powershell
-E:\Data\ObsidianVault\02_Channels\シニア朗読\競合リサーチ\サムネ企画検索ポータル_20260605\deploy_from_bq.ps1
+E:\Data\ObsidianVault\04_Tools\senior-kikaku-research\deploy_from_bq.ps1
 ```
 
 The script runs:

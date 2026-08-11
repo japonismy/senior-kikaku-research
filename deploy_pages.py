@@ -19,11 +19,22 @@ def run(cmd: list[str]) -> None:
         print(out)
 
 
+def sync_remote() -> None:
+    """Bring the deploy checkout up to date before generating a new commit.
+
+    The portal may also be edited from another checkout.  Pulling first keeps
+    the scheduled deploy from accumulating local commits that GitHub rejects
+    as non-fast-forward updates.
+    """
+    run(["git", "pull", "--rebase", "--autostash", "origin", "main"])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from-bq", action="store_true")
     args = ap.parse_args()
 
+    sync_remote()
     generator = "generate_portal_data_from_bq.py" if args.from_bq else "generate_portal_data.py"
     run([sys.executable, generator])
     run([
@@ -38,6 +49,7 @@ def main() -> int:
         "data",
         "reports",
         ".gitignore",
+        "AUTO_DEPLOY.md",
         "download_best_thumbnails.py",
         "ocr_thumbnail_text.py",
         "update_youtube_metadata.py",
