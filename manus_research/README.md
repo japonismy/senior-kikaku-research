@@ -54,6 +54,7 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 - `research_data_coverage`: 動画単位のデータ充足率
 - `research_processing_queue`: 文字起こし・台本分類・サムネ分類の優先キュー
 - `research_calibration_cases`: 校正25本
+- `research_calibration_extension_candidates`: 動画ID未接続の不足P型追加校正候補
 - `own_script_structure_classifications`: AI初回値と人間補正後有効値
 - `manus_task_runs`: Manus送受信記録
 - `manus_classification_results`: 正規化済み分類結果

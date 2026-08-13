@@ -21,6 +21,7 @@ LIB_DIR = (
 AUDIT_DIR = VAULT / "02_Channels" / "シニア朗読" / "企画戦略" / "台本振り返り監査" / "runs" / "20260808"
 TOOLS_REPO = VAULT / "04_Tools" / "senior-kikaku-research"
 CALIBRATION_DIR = VAULT / "02_Channels" / "シニア朗読" / "analysis" / "20260813_一次調査" / "manus_calibration_v1"
+EXTENSION_CANDIDATES_PATH = CALIBRATION_DIR / "追加校正候補_不足P型5本_20260813.json"
 OVERRIDES_PATH = LIB_DIR / "17a_own_structure_human_overrides.json"
 sys.path.insert(0, str(TOOLS_REPO / "cloud_batch"))
 import daily_youtube_metadata_update as daily_job  # noqa: E402
@@ -216,6 +217,79 @@ def merge_calibration(client: bigquery.Client) -> int:
     return len(rows)
 
 
+def merge_extension_candidates(client: bigquery.Client) -> int:
+    if not EXTENSION_CANDIDATES_PATH.exists():
+        return 0
+    payload = json.loads(EXTENSION_CANDIDATES_PATH.read_text(encoding="utf-8"))
+    selected_at = payload.get("created_at") or datetime.now(timezone.utc).isoformat()
+    rows = []
+    for index, candidate in enumerate(payload.get("candidates") or [], start=1):
+        rows.append({
+            "calibration_id": f"EXT-CAL-{index:02d}",
+            "batch_id": "calibration_extension_missing_p_v1",
+            "audit_id": candidate["audit_id"],
+            "management_number": candidate.get("management_number") or "",
+            "title": candidate["title"],
+            "source_case": candidate["source_case"],
+            "prior_primary_structure": candidate["prior_primary_structure"],
+            "prior_director_card": candidate["prior_director_card"],
+            "prior_food_role": candidate["prior_food_role"],
+            "taxonomy_version": "jinsei_recipe_v1",
+            "status": "selected",
+            "selected_at": selected_at,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+    if not rows:
+        return 0
+    schema = [
+        bigquery.SchemaField("calibration_id", "STRING"),
+        bigquery.SchemaField("batch_id", "STRING"),
+        bigquery.SchemaField("audit_id", "STRING"),
+        bigquery.SchemaField("management_number", "STRING"),
+        bigquery.SchemaField("title", "STRING"),
+        bigquery.SchemaField("source_case", "STRING"),
+        bigquery.SchemaField("prior_primary_structure", "STRING"),
+        bigquery.SchemaField("prior_director_card", "STRING"),
+        bigquery.SchemaField("prior_food_role", "STRING"),
+        bigquery.SchemaField("taxonomy_version", "STRING"),
+        bigquery.SchemaField("status", "STRING"),
+        bigquery.SchemaField("selected_at", "TIMESTAMP"),
+        bigquery.SchemaField("updated_at", "TIMESTAMP"),
+    ]
+    target = f"{PROJECT_ID}.{DATASET}.research_calibration_extension_candidates"
+    client.query(f"""
+    CREATE TABLE IF NOT EXISTS `{target}` (
+      calibration_id STRING, batch_id STRING, audit_id STRING, management_number STRING,
+      title STRING, source_case STRING, prior_primary_structure STRING,
+      prior_director_card STRING, prior_food_role STRING, taxonomy_version STRING,
+      status STRING, selected_at TIMESTAMP, updated_at TIMESTAMP
+    )
+    """).result()
+    temp = f"{PROJECT_ID}.{DATASET}._tmp_calibration_extension_{uuid.uuid4().hex}"
+    client.load_table_from_json(rows, temp, job_config=bigquery.LoadJobConfig(schema=schema)).result()
+    try:
+        client.query(f"""
+        MERGE `{target}` T
+        USING `{temp}` S ON T.calibration_id=S.calibration_id AND T.batch_id=S.batch_id
+        WHEN MATCHED THEN UPDATE SET
+          audit_id=S.audit_id, management_number=S.management_number, title=S.title,
+          source_case=S.source_case, prior_primary_structure=S.prior_primary_structure,
+          prior_director_card=S.prior_director_card, prior_food_role=S.prior_food_role,
+          taxonomy_version=S.taxonomy_version, status=S.status, updated_at=S.updated_at
+        WHEN NOT MATCHED THEN INSERT
+          (calibration_id, batch_id, audit_id, management_number, title, source_case,
+           prior_primary_structure, prior_director_card, prior_food_role, taxonomy_version,
+           status, selected_at, updated_at)
+        VALUES
+          (S.calibration_id, S.batch_id, S.audit_id, S.management_number, S.title, S.source_case,
+           S.prior_primary_structure, S.prior_director_card, S.prior_food_role, S.taxonomy_version,
+           S.status, S.selected_at, S.updated_at)
+        """).result()
+    finally:
+        client.delete_table(temp, not_found_ok=True)
+    return len(rows)
+
+
 def create_calibration_review_view(client: bigquery.Client) -> None:
     """Keep the review one-row-per-case even if concurrent collectors wrote twice."""
     sql = f"""
@@ -275,6 +349,7 @@ def main() -> int:
     merge_transcripts(client, transcripts)
     merge_structures(client, structures)
     calibration_rows = merge_calibration(client)
+    extension_candidates = merge_extension_candidates(client)
     daily_job.refresh_research_coverage_and_queue(client)
     create_calibration_review_view(client)
     print(json.dumps({
@@ -282,6 +357,7 @@ def main() -> int:
         "structures_imported": len(structures),
         "mapped_structures": sum(bool(row["video_id"]) for row in structures),
         "calibration_rows": calibration_rows,
+        "extension_candidates": extension_candidates,
     }, ensure_ascii=False))
     return 0
 
