@@ -275,7 +275,9 @@ def merge_extension_candidates(client: bigquery.Client) -> int:
           audit_id=S.audit_id, management_number=S.management_number, title=S.title,
           source_case=S.source_case, prior_primary_structure=S.prior_primary_structure,
           prior_director_card=S.prior_director_card, prior_food_role=S.prior_food_role,
-          taxonomy_version=S.taxonomy_version, status=S.status, updated_at=S.updated_at
+          taxonomy_version=S.taxonomy_version,
+          status=IF(T.status IN ('completed', 'needs_review'), T.status, S.status),
+          updated_at=S.updated_at
         WHEN NOT MATCHED THEN INSERT
           (calibration_id, batch_id, audit_id, management_number, title, source_case,
            prior_primary_structure, prior_director_card, prior_food_role, taxonomy_version,
@@ -342,6 +344,59 @@ def create_calibration_review_view(client: bigquery.Client) -> None:
     client.query(sql).result()
 
 
+def create_extension_review_view(client: bigquery.Client) -> None:
+    sql = f"""
+    CREATE OR REPLACE VIEW `{PROJECT_ID}.{DATASET}.manus_calibration_extension_review_v1` AS
+    WITH prior AS (
+      SELECT * EXCEPT(rn)
+      FROM (
+        SELECT p.*, ROW_NUMBER() OVER (
+          PARTITION BY audit_id, taxonomy_version ORDER BY imported_at DESC
+        ) rn
+        FROM `{PROJECT_ID}.{DATASET}.own_script_structure_classifications` p
+        WHERE taxonomy_version='p_r_effective_20260808'
+      )
+      WHERE rn=1
+    ), results AS (
+      SELECT * EXCEPT(rn)
+      FROM (
+        SELECT r.*, ROW_NUMBER() OVER (
+          PARTITION BY entity_id, task_type, taxonomy_version ORDER BY updated_at DESC, created_at DESC
+        ) rn
+        FROM `{PROJECT_ID}.{DATASET}.manus_classification_results` r
+        WHERE task_type='classify_story_extension'
+      )
+      WHERE rn=1
+    )
+    SELECT
+      c.calibration_id, c.batch_id, c.audit_id, c.management_number, c.title, c.status,
+      c.prior_primary_structure original_primary_structure,
+      c.prior_director_card original_director_card,
+      c.prior_food_role original_food_role,
+      JSON_VALUE(p.classification_json, '$.primary_cluster') prior_primary_structure,
+      JSON_VALUE(p.classification_json, '$.director_card') prior_director_card,
+      JSON_VALUE(p.classification_json, '$.food_role') prior_food_role,
+      JSON_VALUE(r.result_json, '$.primary_structure') manus_primary_structure,
+      JSON_VALUE(r.result_json, '$.director_card') manus_director_card,
+      JSON_VALUE(r.result_json, '$.food_role') manus_food_role,
+      r.confidence, r.needs_review manus_needs_review,
+      JSON_VALUE(p.classification_json, '$.primary_cluster')=JSON_VALUE(r.result_json, '$.primary_structure') primary_agreement,
+      JSON_VALUE(p.classification_json, '$.director_card')=JSON_VALUE(r.result_json, '$.director_card') card_agreement,
+      JSON_VALUE(p.classification_json, '$.food_role')=JSON_VALUE(r.result_json, '$.food_role') food_role_agreement,
+      r.entity_id IS NOT NULL AND (
+        r.needs_review OR COALESCE(r.confidence,0)<0.75
+        OR JSON_VALUE(p.classification_json, '$.primary_cluster')!=JSON_VALUE(r.result_json, '$.primary_structure')
+        OR JSON_VALUE(p.classification_json, '$.director_card')!=JSON_VALUE(r.result_json, '$.director_card')
+        OR JSON_VALUE(p.classification_json, '$.food_role')!=JSON_VALUE(r.result_json, '$.food_role')
+      ) needs_human_calibration_review,
+      r.result_json, r.updated_at
+    FROM `{PROJECT_ID}.{DATASET}.research_calibration_extension_candidates` c
+    LEFT JOIN prior p ON p.audit_id=c.audit_id
+    LEFT JOIN results r ON r.entity_id=c.audit_id AND r.taxonomy_version=c.taxonomy_version
+    """
+    client.query(sql).result()
+
+
 def main() -> int:
     client = bigquery.Client(project=PROJECT_ID)
     daily_job.ensure_research_tables(client)
@@ -352,6 +407,7 @@ def main() -> int:
     extension_candidates = merge_extension_candidates(client)
     daily_job.refresh_research_coverage_and_queue(client)
     create_calibration_review_view(client)
+    create_extension_review_view(client)
     print(json.dumps({
         "transcripts_imported": len(transcripts),
         "structures_imported": len(structures),

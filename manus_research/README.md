@@ -33,6 +33,7 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 
 ```powershell
 & $python .\manus_research\manus_pipeline.py run --task-type classify_story --limit 1 --profile manus-1.6
+& $python .\manus_research\manus_pipeline.py run --task-type classify_story_extension --limit 1 --profile manus-1.6
 & $python .\manus_research\manus_pipeline.py run --task-type classify_thumbnail --limit 1 --profile manus-1.6
 ```
 
@@ -55,6 +56,8 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 - `research_processing_queue`: 文字起こし・台本分類・サムネ分類の優先キュー
 - `research_calibration_cases`: 校正25本
 - `research_calibration_extension_candidates`: 動画ID未接続の不足P型追加校正候補
+- `manus_calibration_extension_review_v1`: 不足P型追加校正の一致・不一致レビュー
+- `combined_calibration_metrics.sql`: 動画25本と台本拡張5本の統合集計
 - `own_script_structure_classifications`: AI初回値と人間補正後有効値
 - `manus_task_runs`: Manus送受信記録
 - `manus_classification_results`: 正規化済み分類結果

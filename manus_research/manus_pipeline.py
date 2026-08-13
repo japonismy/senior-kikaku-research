@@ -28,6 +28,7 @@ DEFAULT_ANCHOR_TASK_ID = "eMrKZvhdv3vA9JDFKBEgww"
 ROOT = Path(__file__).resolve().parent
 SCHEMAS = {
     "classify_story": ROOT / "story_schema_v1.json",
+    "classify_story_extension": ROOT / "story_schema_v1.json",
     "classify_thumbnail": ROOT / "thumbnail_schema_v1.json",
 }
 CLASSIFICATION_DEFINITIONS = ROOT / "classification_definitions_v1.json"
@@ -167,6 +168,29 @@ def find_direct_output(value: Any, after_timestamp_ms: int, required_keys: set[s
 
 
 def fetch_pending(task_type: str, limit: int) -> list[dict[str, Any]]:
+    if task_type == "classify_story_extension":
+        rows = bq_query(
+            f"""
+            SELECT
+              CONCAT('classify_story_extension:', audit_id) AS queue_id,
+              audit_id AS video_id,
+              'self-script' AS channel_id,
+              'classify_story_extension' AS task_type,
+              taxonomy_version, 300 AS priority, title, source_case
+            FROM `{PROJECT_ID}.{DATASET}.research_calibration_extension_candidates`
+            WHERE status IN ('selected', 'pending')
+            ORDER BY calibration_id
+            LIMIT {int(limit)}
+            """,
+            json_output=True,
+        )
+        for row in rows:
+            case_path = Path(str(row.pop("source_case")))
+            case = json.loads(case_path.read_text(encoding="utf-8"))
+            row["transcript_text"] = str(case.get("script") or "")
+            if not row["transcript_text"].strip():
+                raise RuntimeError(f"拡張校正台本が空です: {case_path}")
+        return rows
     sql = f"""
     WITH effective_prior AS (
       SELECT
@@ -253,11 +277,20 @@ transcript:
 
 
 def set_queue_running(row: dict[str, Any], task_id: str, profile: str, request_record: dict[str, Any]) -> None:
-    sql = f"""
-    UPDATE `{PROJECT_ID}.{DATASET}.research_processing_queue`
-    SET status='running', attempt_count=attempt_count+1, manus_task_id=@task_id,
-        last_error='', updated_at=CURRENT_TIMESTAMP()
-    WHERE queue_id=@queue_id;
+    if row["task_type"] == "classify_story_extension":
+        queue_update = f"""
+        UPDATE `{PROJECT_ID}.{DATASET}.research_calibration_extension_candidates`
+        SET status='running', updated_at=CURRENT_TIMESTAMP()
+        WHERE audit_id=@entity_id;
+        """
+    else:
+        queue_update = f"""
+        UPDATE `{PROJECT_ID}.{DATASET}.research_processing_queue`
+        SET status='running', attempt_count=attempt_count+1, manus_task_id=@task_id,
+            last_error='', updated_at=CURRENT_TIMESTAMP()
+        WHERE queue_id=@queue_id;
+        """
+    sql = queue_update + f"""
     INSERT INTO `{PROJECT_ID}.{DATASET}.manus_task_runs`
       (manus_task_id, queue_id, status, agent_profile, request_json, response_json, error, created_at, updated_at)
     VALUES
@@ -266,21 +299,34 @@ def set_queue_running(row: dict[str, Any], task_id: str, profile: str, request_r
     bq_query(sql, {
         "task_id": task_id,
         "queue_id": row["queue_id"],
+        "entity_id": row["video_id"],
         "profile": profile,
         "request_json": json.dumps(request_record, ensure_ascii=False, separators=(",", ":")),
     })
 
 
-def mark_failed(queue_id: str, task_id: str, error: str) -> None:
-    sql = f"""
-    UPDATE `{PROJECT_ID}.{DATASET}.research_processing_queue`
-    SET status='failed', last_error=@error, updated_at=CURRENT_TIMESTAMP()
-    WHERE queue_id=@queue_id;
+def mark_failed(row: dict[str, Any], task_id: str, error: str) -> None:
+    if row["task_type"] == "classify_story_extension":
+        queue_update = f"""
+        UPDATE `{PROJECT_ID}.{DATASET}.research_calibration_extension_candidates`
+        SET status='failed', updated_at=CURRENT_TIMESTAMP()
+        WHERE audit_id=@entity_id;
+        """
+    else:
+        queue_update = f"""
+        UPDATE `{PROJECT_ID}.{DATASET}.research_processing_queue`
+        SET status='failed', last_error=@error, updated_at=CURRENT_TIMESTAMP()
+        WHERE queue_id=@queue_id;
+        """
+    sql = queue_update + f"""
     UPDATE `{PROJECT_ID}.{DATASET}.manus_task_runs`
     SET status='failed', error=@error, updated_at=CURRENT_TIMESTAMP()
     WHERE manus_task_id=@task_id AND queue_id=@queue_id;
     """
-    bq_query(sql, {"queue_id": queue_id, "task_id": task_id, "error": error[:1500]})
+    bq_query(sql, {
+        "queue_id": row["queue_id"], "entity_id": row["video_id"],
+        "task_id": task_id, "error": error[:1500],
+    })
 
 
 def mark_completed(row: dict[str, Any], task_id: str, profile: str, output: dict[str, Any], messages: dict[str, Any]) -> None:
@@ -300,6 +346,20 @@ def mark_completed(row: dict[str, Any], task_id: str, profile: str, output: dict
     confidence = float(value.get("confidence") or 0)
     needs_review = bool(value.get("needs_review"))
     prompt_hash = row.get("prompt_hash") or ""
+    if row["task_type"] == "classify_story_extension":
+        entity_type = "script"
+        queue_update = f"""
+        UPDATE `{PROJECT_ID}.{DATASET}.research_calibration_extension_candidates`
+        SET status=@queue_status, updated_at=CURRENT_TIMESTAMP()
+        WHERE audit_id=@entity_id;
+        """
+    else:
+        entity_type = "video"
+        queue_update = f"""
+        UPDATE `{PROJECT_ID}.{DATASET}.research_processing_queue`
+        SET status=@queue_status, last_error=@quality_error, updated_at=CURRENT_TIMESTAMP()
+        WHERE queue_id=@queue_id;
+        """
     sql = f"""
     MERGE `{PROJECT_ID}.{DATASET}.manus_classification_results` T
     USING (SELECT @entity_id entity_id, @task_type task_type, @taxonomy taxonomy_version) S
@@ -312,18 +372,17 @@ def mark_completed(row: dict[str, Any], task_id: str, profile: str, output: dict
       (result_id, entity_type, entity_id, task_type, taxonomy_version, manus_task_id,
        agent_profile, result_json, confidence, needs_review, prompt_hash, created_at, updated_at)
     VALUES
-      (@result_id, 'video', @entity_id, @task_type, @taxonomy, @task_id,
+      (@result_id, @entity_type, @entity_id, @task_type, @taxonomy, @task_id,
        @profile, @result_json, CAST(@confidence AS FLOAT64), CAST(@needs_review AS BOOL),
        @prompt_hash, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP());
-    UPDATE `{PROJECT_ID}.{DATASET}.research_processing_queue`
-    SET status=@queue_status, last_error=@quality_error, updated_at=CURRENT_TIMESTAMP()
-    WHERE queue_id=@queue_id;
+    {queue_update}
     UPDATE `{PROJECT_ID}.{DATASET}.manus_task_runs`
     SET status='completed', response_json=@response_json, error='', updated_at=CURRENT_TIMESTAMP()
     WHERE manus_task_id=@task_id AND queue_id=@queue_id;
     """
     bq_query(sql, {
         "result_id": str(uuid.uuid4()),
+        "entity_type": entity_type,
         "entity_id": row["video_id"],
         "task_type": row["task_type"],
         "taxonomy": row.get("taxonomy_version") or "jinsei_recipe_v1",
@@ -351,7 +410,7 @@ def validate_output_quality(task_type: str, value: dict[str, Any], expected_vide
         errors.append("confidenceが1を超過")
     if not value.get("evidence"):
         errors.append("evidenceが空")
-    if task_type == "classify_story":
+    if task_type.startswith("classify_story"):
         fingerprint = value.get("plot_fingerprint") or {}
         if not fingerprint.get("repeated_actions"):
             errors.append("repeated_actionsが空")
@@ -374,9 +433,16 @@ def validate_output_quality(task_type: str, value: dict[str, Any], expected_vide
 def assert_no_running_queue() -> None:
     rows = bq_query(
         f"""
-        SELECT queue_id, entity_id, task_type
-        FROM `{PROJECT_ID}.{DATASET}.research_processing_queue`
-        WHERE status='running'
+        SELECT queue_id, entity_id, task_type FROM (
+          SELECT queue_id, entity_id, task_type, updated_at
+          FROM `{PROJECT_ID}.{DATASET}.research_processing_queue`
+          WHERE status='running'
+          UNION ALL
+          SELECT CONCAT('classify_story_extension:', audit_id), audit_id,
+                 'classify_story_extension', updated_at
+          FROM `{PROJECT_ID}.{DATASET}.research_calibration_extension_candidates`
+          WHERE status='running'
+        )
         ORDER BY updated_at
         LIMIT 1
         """,
@@ -401,7 +467,7 @@ def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_
     for row in rows:
         prompt_row = dict(row)
         transcript_attachment = ""
-        if task_type == "classify_story" and row.get("transcript_text"):
+        if task_type.startswith("classify_story") and row.get("transcript_text"):
             transcript_attachment = str(row["transcript_text"])
             prompt_row["transcript_text"] = (
                 f"添付ファイル {row['video_id']}_transcript.txt を全文台本として読み、"
@@ -458,12 +524,26 @@ def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_
 
 def fetch_running(limit: int) -> list[dict[str, Any]]:
     sql = f"""
-    SELECT q.queue_id, q.entity_id AS video_id, q.task_type, q.taxonomy_version,
+    WITH running_queues AS (
+      SELECT q.queue_id, q.entity_id AS video_id, q.task_type, q.taxonomy_version,
+             q.manus_task_id, q.updated_at
+      FROM `{PROJECT_ID}.{DATASET}.research_processing_queue` q
+      WHERE q.status='running'
+      UNION ALL
+      SELECT CONCAT('classify_story_extension:', c.audit_id), c.audit_id,
+             'classify_story_extension', c.taxonomy_version, r.manus_task_id, c.updated_at
+      FROM `{PROJECT_ID}.{DATASET}.research_calibration_extension_candidates` c
+      JOIN `{PROJECT_ID}.{DATASET}.manus_task_runs` r
+        ON r.queue_id=CONCAT('classify_story_extension:', c.audit_id)
+      WHERE c.status='running' AND r.status='running'
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY c.audit_id ORDER BY r.created_at DESC)=1
+    )
+    SELECT q.queue_id, q.video_id, q.task_type, q.taxonomy_version,
            q.manus_task_id, r.agent_profile, r.request_json
-    FROM `{PROJECT_ID}.{DATASET}.research_processing_queue` q
+    FROM running_queues q
     JOIN `{PROJECT_ID}.{DATASET}.manus_task_runs` r
       ON r.manus_task_id=q.manus_task_id AND r.queue_id=q.queue_id
-    WHERE q.status='running' AND r.status='running'
+    WHERE r.status='running'
     QUALIFY ROW_NUMBER() OVER (PARTITION BY q.queue_id ORDER BY r.created_at DESC) = 1
     ORDER BY r.created_at
     LIMIT {int(limit)}
@@ -488,7 +568,7 @@ def poll_once(limit: int) -> list[dict[str, str]]:
             continue
         if not structured.get("success"):
             error = str(structured.get("error") or "Structured output extraction failed")
-            mark_failed(row["queue_id"], task_id, error)
+            mark_failed(row, task_id, error)
             outcomes.append({"task_id": task_id, "video_id": row["video_id"], "status": "failed"})
             continue
         row["prompt_hash"] = request_record.get("prompt_hash", "")
