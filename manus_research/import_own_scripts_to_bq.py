@@ -21,6 +21,7 @@ LIB_DIR = (
 AUDIT_DIR = VAULT / "02_Channels" / "シニア朗読" / "企画戦略" / "台本振り返り監査" / "runs" / "20260808"
 TOOLS_REPO = VAULT / "04_Tools" / "senior-kikaku-research"
 CALIBRATION_DIR = VAULT / "02_Channels" / "シニア朗読" / "analysis" / "20260813_一次調査" / "manus_calibration_v1"
+OVERRIDES_PATH = LIB_DIR / "17a_own_structure_human_overrides.json"
 sys.path.insert(0, str(TOOLS_REPO / "cloud_batch"))
 import daily_youtube_metadata_update as daily_job  # noqa: E402
 
@@ -33,6 +34,10 @@ def read_jsonl(path: Path) -> list[dict]:
 def load_rows() -> tuple[list[dict], list[dict]]:
     performance = {row["audit_id"]: row for row in read_jsonl(LIB_DIR / "17_own_structure_performance.jsonl")}
     classifications = {row["audit_id"]: row for row in read_jsonl(LIB_DIR / "16_own_structure_classifications.jsonl")}
+    overrides = {
+        row["audit_id"]: row
+        for row in json.loads(OVERRIDES_PATH.read_text(encoding="utf-8"))
+    }
     transcript_rows: list[dict] = []
     structure_rows: list[dict] = []
     imported_at = datetime.now(timezone.utc).isoformat()
@@ -71,7 +76,11 @@ def load_rows() -> tuple[list[dict], list[dict]]:
             for key in ("primary_cluster", "director_card", "food_role", "structure_fingerprint", "similarity_risk_signature"):
                 if perf.get(key) not in (None, ""):
                     effective_classification[key] = perf[key]
-            effective_classification["human_override_reason"] = perf.get("human_override_reason")
+            override = overrides.get(audit_id) or {}
+            for key in ("primary_cluster", "director_card", "food_role"):
+                if override.get(key) not in (None, ""):
+                    effective_classification[key] = override[key]
+            effective_classification["human_override_reason"] = override.get("reason") or perf.get("human_override_reason")
             structure_rows.append({
                 "audit_id": audit_id,
                 "video_id": video_id,
@@ -207,6 +216,57 @@ def merge_calibration(client: bigquery.Client) -> int:
     return len(rows)
 
 
+def create_calibration_review_view(client: bigquery.Client) -> None:
+    """Keep the review one-row-per-case even if concurrent collectors wrote twice."""
+    sql = f"""
+    CREATE OR REPLACE VIEW `{PROJECT_ID}.{DATASET}.manus_calibration_review_v1` AS
+    WITH prior AS (
+      SELECT * EXCEPT(rn)
+      FROM (
+        SELECT p.*, ROW_NUMBER() OVER (
+          PARTITION BY audit_id, taxonomy_version ORDER BY imported_at DESC
+        ) AS rn
+        FROM `{PROJECT_ID}.{DATASET}.own_script_structure_classifications` p
+        WHERE taxonomy_version='p_r_effective_20260808'
+      )
+      WHERE rn=1
+    ), results AS (
+      SELECT * EXCEPT(rn)
+      FROM (
+        SELECT r.*, ROW_NUMBER() OVER (
+          PARTITION BY entity_id, task_type, taxonomy_version ORDER BY updated_at DESC, created_at DESC
+        ) AS rn
+        FROM `{PROJECT_ID}.{DATASET}.manus_classification_results` r
+        WHERE task_type='classify_story'
+      )
+      WHERE rn=1
+    )
+    SELECT
+      k.calibration_id, k.batch_id, k.video_id, k.title,
+      JSON_VALUE(p.classification_json, '$.primary_cluster') AS prior_primary_structure,
+      JSON_VALUE(p.classification_json, '$.director_card') AS prior_director_card,
+      JSON_VALUE(p.classification_json, '$.food_role') AS prior_food_role,
+      JSON_VALUE(r.result_json, '$.primary_structure') AS manus_primary_structure,
+      JSON_VALUE(r.result_json, '$.director_card') AS manus_director_card,
+      JSON_VALUE(r.result_json, '$.food_role') AS manus_food_role,
+      r.confidence, r.needs_review AS manus_needs_review,
+      JSON_VALUE(p.classification_json, '$.primary_cluster') = JSON_VALUE(r.result_json, '$.primary_structure') AS primary_agreement,
+      JSON_VALUE(p.classification_json, '$.director_card') = JSON_VALUE(r.result_json, '$.director_card') AS card_agreement,
+      JSON_VALUE(p.classification_json, '$.food_role') = JSON_VALUE(r.result_json, '$.food_role') AS food_role_agreement,
+      r.needs_review OR COALESCE(r.confidence, 0) < 0.75
+        OR JSON_VALUE(p.classification_json, '$.primary_cluster') != JSON_VALUE(r.result_json, '$.primary_structure')
+        OR JSON_VALUE(p.classification_json, '$.director_card') != JSON_VALUE(r.result_json, '$.director_card')
+        OR JSON_VALUE(p.classification_json, '$.food_role') != JSON_VALUE(r.result_json, '$.food_role')
+        AS needs_human_calibration_review,
+      r.result_json, r.updated_at
+    FROM `{PROJECT_ID}.{DATASET}.research_calibration_cases` k
+    LEFT JOIN prior p ON p.audit_id=k.audit_id
+    LEFT JOIN results r
+      ON r.entity_id=k.video_id AND r.taxonomy_version=k.taxonomy_version
+    """
+    client.query(sql).result()
+
+
 def main() -> int:
     client = bigquery.Client(project=PROJECT_ID)
     daily_job.ensure_research_tables(client)
@@ -215,6 +275,7 @@ def main() -> int:
     merge_structures(client, structures)
     calibration_rows = merge_calibration(client)
     daily_job.refresh_research_coverage_and_queue(client)
+    create_calibration_review_view(client)
     print(json.dumps({
         "transcripts_imported": len(transcripts),
         "structures_imported": len(structures),
