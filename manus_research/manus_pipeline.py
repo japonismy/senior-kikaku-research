@@ -214,8 +214,8 @@ def fetch_pending(task_type: str, limit: int) -> list[dict[str, Any]]:
     WHERE q.status = 'pending'
       AND q.task_type = @task_type
     QUALIFY ROW_NUMBER() OVER (PARTITION BY q.entity_id ORDER BY LENGTH(COALESCE(t.transcript_text, '')) DESC) = 1
-    ORDER BY COALESCE(s.completed_count, 0), COALESCE(d.completed_count, 0),
-             q.priority DESC, c.is_self DESC, c.view_count DESC
+    ORDER BY q.priority DESC, COALESCE(s.completed_count, 0), COALESCE(d.completed_count, 0),
+             c.is_self DESC, c.view_count DESC
     LIMIT {int(limit)}
     """
     return bq_query(sql, {"task_type": task_type}, json_output=True)
