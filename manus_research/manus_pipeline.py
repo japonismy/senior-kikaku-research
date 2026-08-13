@@ -7,6 +7,7 @@ It is never printed or written to BigQuery.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 import uuid
 from pathlib import Path
 from typing import Any
@@ -80,8 +82,20 @@ def api_request(method: str, path: str, payload: dict[str, Any] | None = None) -
             "User-Agent": "senior-kikaku-research/1.0",
         },
     )
-    with urllib.request.urlopen(request, timeout=90) as response:
-        result = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(raw)
+            error = detail.get("error") or detail
+            code = error.get("code") or f"HTTP_{exc.code}"
+            message = error.get("message") or raw
+        except json.JSONDecodeError:
+            code = f"HTTP_{exc.code}"
+            message = raw
+        raise RuntimeError(f"Manus API: {code}: {message[:1500]}") from exc
     if result.get("ok") is False:
         error = result.get("error") or {}
         raise RuntimeError(f"Manus API: {error.get('code', 'error')}: {error.get('message', '')}")
@@ -154,6 +168,32 @@ def find_direct_output(value: Any, after_timestamp_ms: int, required_keys: set[s
 
 def fetch_pending(task_type: str, limit: int) -> list[dict[str, Any]]:
     sql = f"""
+    WITH effective_prior AS (
+      SELECT
+        video_id,
+        JSON_VALUE(classification_json, '$.primary_cluster') AS prior_primary_structure,
+        JSON_VALUE(classification_json, '$.director_card') AS prior_director_card
+      FROM `{PROJECT_ID}.{DATASET}.own_script_structure_classifications`
+      WHERE taxonomy_version='p_r_effective_20260808' AND video_id IS NOT NULL
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY video_id ORDER BY imported_at DESC)=1
+    ), completed_by_pair AS (
+      SELECT
+        p.prior_primary_structure,
+        p.prior_director_card,
+        COUNT(DISTINCT r.entity_id) AS completed_count
+      FROM `{PROJECT_ID}.{DATASET}.manus_classification_results` r
+      JOIN effective_prior p ON p.video_id=r.entity_id
+      WHERE r.task_type='classify_story'
+      GROUP BY 1, 2
+    ), completed_by_primary AS (
+      SELECT
+        p.prior_primary_structure,
+        COUNT(DISTINCT r.entity_id) AS completed_count
+      FROM `{PROJECT_ID}.{DATASET}.manus_classification_results` r
+      JOIN effective_prior p ON p.video_id=r.entity_id
+      WHERE r.task_type='classify_story'
+      GROUP BY 1
+    )
     SELECT
       q.queue_id, q.entity_id AS video_id, q.channel_id, q.task_type,
       q.taxonomy_version, q.priority, c.title, c.thumbnail_gcs_uri,
@@ -165,10 +205,17 @@ def fetch_pending(task_type: str, limit: int) -> list[dict[str, Any]]:
       ON v.video_id = q.entity_id
     LEFT JOIN `{PROJECT_ID}.{DATASET}.analysis_competitor_db__transcripts` t
       ON t.video_id = q.entity_id
+    LEFT JOIN effective_prior p ON p.video_id=q.entity_id
+    LEFT JOIN completed_by_pair d
+      ON d.prior_primary_structure=p.prior_primary_structure
+     AND d.prior_director_card=p.prior_director_card
+    LEFT JOIN completed_by_primary s
+      ON s.prior_primary_structure=p.prior_primary_structure
     WHERE q.status = 'pending'
       AND q.task_type = @task_type
     QUALIFY ROW_NUMBER() OVER (PARTITION BY q.entity_id ORDER BY LENGTH(COALESCE(t.transcript_text, '')) DESC) = 1
-    ORDER BY q.priority DESC, c.is_self DESC, c.view_count DESC
+    ORDER BY COALESCE(s.completed_count, 0), COALESCE(d.completed_count, 0),
+             q.priority DESC, c.is_self DESC, c.view_count DESC
     LIMIT {int(limit)}
     """
     return bq_query(sql, {"task_type": task_type}, json_output=True)
@@ -328,7 +375,15 @@ def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_
     rows = fetch_pending(task_type, limit)
     submitted: list[dict[str, str]] = []
     for row in rows:
-        prompt = make_prompt(row)
+        prompt_row = dict(row)
+        transcript_attachment = ""
+        if task_type == "classify_story" and row.get("transcript_text"):
+            transcript_attachment = str(row["transcript_text"])
+            prompt_row["transcript_text"] = (
+                f"添付ファイル {row['video_id']}_transcript.txt を全文台本として読み、"
+                "省略せずに因果骨格を分類してください。"
+            )
+        prompt = make_prompt(prompt_row)
         prompt += (
             "\n\n以下のJSON Schemaと完全に同じフィールド名・型で、コードフェンス以外の文章を付けず、"
             "単一のJSONオブジェクトだけを最終回答にしてください。\nOUTPUT_JSON_SCHEMA:\n"
@@ -339,9 +394,21 @@ def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_
         if dry_run:
             submitted.append({"queue_id": row["queue_id"], "video_id": row["video_id"], "status": "dry_run"})
             continue
+        message_content: str | list[dict[str, str]] = prompt
+        if transcript_attachment:
+            encoded = base64.b64encode(transcript_attachment.encode("utf-8")).decode("ascii")
+            message_content = [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "file",
+                    "file_data": f"data:text/plain;base64,{encoded}",
+                    "filename": f"{row['video_id']}_transcript.txt",
+                    "mime_type": "text/plain",
+                },
+            ]
         payload = {
             "task_id": anchor_task_id,
-            "message": {"content": prompt},
+            "message": {"content": message_content},
             "agent_profile": profile,
             "structured_output_schema": schema,
         }
@@ -356,6 +423,7 @@ def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_
             "profile": profile,
             "prompt_hash": prompt_hash,
             "prompt_chars": len(prompt),
+            "attachment_chars": len(transcript_attachment),
             "schema_file": SCHEMAS[task_type].name,
             "submitted_after_ms": submitted_after_ms,
         }

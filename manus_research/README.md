@@ -41,6 +41,7 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 ## 品質ゲート
 
 - 最新送信時刻より前のイベントを採用しない。
+- 長尺台本はメッセージ本文へ埋め込まず、UTF-8テキストの `file_data` 添付として渡す。Manusの本文約5,000推定トークン制限を避け、全文を保持する。
 - 最新ターンの本文JSONを優先し、必須キーが揃わない場合だけStructured Outputへフォールバックする。
 - 4スコアは整数0〜10。confidenceは0〜1へ正規化する。
 - evidence、主要配列、スコア、confidenceが空または異常なら `needs_review` にする。
