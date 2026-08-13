@@ -9,15 +9,18 @@
 - 対象: `sync_target = senior_reading`、`include = true`、韓国元動画除外、ショート除外
 - 更新内容: title / published_at / view_count / like_count / comment_count / thumbnail_url / duration / fetched_at
 - KPI履歴: `video_snapshots` に view_count / like_count / comment_count / like_rate / comment_rate を日次保存
+- 公開状態履歴: `video_availability_checks`、現在状態: `video_availability_current`、変化イベント: `video_availability_events`
 - サムネ: GCS `gs://senior-share-staging-570862915709/senior_reading_thumbnails/{video_id}.jpg` へ保存
 - 実行ログ: `youtube_metadata_update_runs`
 - サムネ保存ログ: `thumbnail_assets`
 
 ## 運用
 
-- 毎日03:00 JST: YouTubeメタデータ更新 + サムネDL
+- 毎日17:10 JST: YouTubeメタデータ更新 + サムネDL
 - 同じ実行で `video_snapshots` へ日次KPIをUPSERTする
 - サムネDLは、既に保存済みで `source_url` が変わっていない動画はスキップする
+- APIから1回消えた動画は`非公開疑い`、連続2回で`非公開確認`とし、過去メタデータは消さない
+- 「人生は贈り物」など重点チャンネルは別Jobで3時間ごとに確認する
 - Gemini OCR/構図分析は定期自動実行しない
 - Gemini対象は `research_channel_scopes.scope = 'jun_kando_12'` の純感動12chに絞る
 
@@ -55,6 +58,14 @@ ORDER BY v.view_count DESC;
 - `THUMBNAIL_BUCKET`: 既定 `senior-share-staging-570862915709`
 - `THUMBNAIL_PREFIX`: 既定 `senior_reading_thumbnails`
 - `LIMIT`: テスト用。`0` なら全件
+- `TARGET_CHANNEL_IDS`: 重点監視対象をカンマ区切りで限定
+- `AVAILABILITY_CONFIRM_MISSES`: 非公開確認に必要な連続欠落数。既定2
+
+重点監視のデプロイ:
+
+```powershell
+.\deploy_hot_monitor.ps1
+```
 
 ## デプロイ概要
 

@@ -213,6 +213,8 @@
     }
     .badge.hit { color: #fff; border-color: var(--accent); background: rgba(56,161,105,.18); }
     .badge.warn { color: #fff; border-color: var(--warn); background: rgba(214,158,46,.18); }
+    .badge.danger { color: #fff; border-color: #e35d6a; background: rgba(227,93,106,.22); }
+    .badge.archive { color: #fff; border-color: #8b7cf6; background: rgba(139,124,246,.2); }
     .badge.group { color: #fff; border-color: #4c8bf5; background: rgba(76,139,245,.18); }
     .badge.kando { color: #fff; border-color: #d56aa0; background: rgba(213,106,160,.2); }
     .badge.sukatto { color: #fff; border-color: #4db6ac; background: rgba(77,182,172,.2); }
@@ -303,6 +305,24 @@
           <option value="missing">サムネ文字未整備</option>
         </select>
       </label>
+      <label>公開状態
+        <select id="availabilityStatus">
+          <option value="">すべて</option>
+          <option value="public">公開確認済み</option>
+          <option value="suspected_unavailable">非公開疑い</option>
+          <option value="confirmed_unavailable">非公開確認</option>
+          <option value="unknown">未確認</option>
+        </select>
+      </label>
+      <label>アーカイブ
+        <select id="archiveStatus">
+          <option value="">すべて</option>
+          <option value="complete">サムネ・文字起こしあり</option>
+          <option value="thumbnail">保存サムネあり</option>
+          <option value="transcript">文字起こしあり</option>
+          <option value="missing">どちらか未整備</option>
+        </select>
+      </label>
       <label class="filter-sort">並び替え
         <select id="sort">
           <option value="date_desc" selected>公開日が新しい順</option>
@@ -341,6 +361,7 @@
         <img id="detailImg" alt="">
         <div class="actions">
           <a id="youtubeLink" href="#" target="_blank" rel="noopener">YouTube</a>
+          <a id="archiveThumbnailLink" href="#" target="_blank" rel="noopener" hidden>保存サムネ</a>
           <button id="downloadCsvBtn" type="button">CSV DL</button>
           <button id="downloadThumbnailBtn" type="button">サムネDL</button>
           <button id="closeBtn" type="button">閉じる</button>
@@ -417,6 +438,8 @@
       const dateTo = document.getElementById("dateTo").value;
       const sort = document.getElementById("sort").value;
       const thumbnailTextStatus = document.getElementById("thumbnailTextStatus").value;
+      const availabilityStatus = document.getElementById("availabilityStatus").value;
+      const archiveStatus = document.getElementById("archiveStatus").value;
       const genreKando = document.getElementById("genreKando").checked;
       const genreSukatto = document.getElementById("genreSukatto").checked;
 
@@ -436,6 +459,11 @@
         if (dateTo && (!v.published_at || v.published_at.slice(0, 10) > dateTo)) return false;
         if (thumbnailTextStatus === "ready" && !(v.thumbnail_text || "").trim()) return false;
         if (thumbnailTextStatus === "missing" && (v.thumbnail_text || "").trim()) return false;
+        if (availabilityStatus && (v.availability_status || "unknown") !== availabilityStatus) return false;
+        if (archiveStatus === "complete" && !(v.has_archived_thumbnail && v.has_archived_transcript)) return false;
+        if (archiveStatus === "thumbnail" && !v.has_archived_thumbnail) return false;
+        if (archiveStatus === "transcript" && !v.has_archived_transcript) return false;
+        if (archiveStatus === "missing" && v.has_archived_thumbnail && v.has_archived_transcript) return false;
         if (terms.length && !hit.ok) return false;
         return true;
       });
@@ -490,7 +518,15 @@
       const groupBadge = v.channel_group
         ? `<span class="badge group">${escapeHtml(v.channel_group)}</span>`
         : "";
-      const badges = genreBadge + groupBadge + (hit.fields.length
+      const availabilityBadge = v.availability_status === "confirmed_unavailable"
+        ? '<span class="badge danger">非公開確認</span>'
+        : v.availability_status === "suspected_unavailable"
+          ? '<span class="badge warn">非公開疑い</span>'
+          : "";
+      const archiveBadge = v.has_archived_thumbnail && v.has_archived_transcript
+        ? '<span class="badge archive">アーカイブ完備</span>'
+        : "";
+      const badges = genreBadge + groupBadge + availabilityBadge + archiveBadge + (hit.fields.length
         ? hit.fields.map(x => `<span class="badge hit">${escapeHtml(x)}</span>`).join("")
         : (v.thumbnail_text ? "" : '<span class="badge warn">サムネ文字未整備</span>'));
       return `<article class="card" data-idx="${idx}">
@@ -518,6 +554,9 @@
       detailImg.src = preferredThumbnail(v);
       document.getElementById("detailTitle").textContent = v.title || "";
       document.getElementById("youtubeLink").href = v.youtube_url;
+      const archiveLink = document.getElementById("archiveThumbnailLink");
+      archiveLink.hidden = !v.thumbnail_gcs_uri;
+      archiveLink.href = gcsConsoleUrl(v.thumbnail_gcs_uri);
       document.getElementById("detailMeta").innerHTML = [
         `チャンネル: ${escapeHtml(v.channel || "")}`,
         `ジャンル: ${genreCategory(v) === "kando" ? "感動" : genreCategory(v) === "sukatto" ? "スカッと" : "参考"}`,
@@ -526,7 +565,11 @@
         `高評価: ${fmt.format(v.like_count || 0)} / 高評価率 ${rateText(v.like_count, v.view_count)}`,
         `コメント: ${fmt.format(v.comment_count || 0)} / コメント率 ${rateText(v.comment_count, v.view_count)}`,
         `公開日: ${escapeHtml((v.published_at || "").slice(0, 10) || "日付なし")}`,
-        `更新日: ${escapeHtml(formatDateTime(v.fetched_at) || "不明")}`
+        `更新日: ${escapeHtml(formatDateTime(v.fetched_at) || "不明")}`,
+        `公開状態: ${escapeHtml(availabilityLabel(v.availability_status))}`,
+        `最終公開確認: ${escapeHtml(formatDateTime(v.last_seen_public_at) || "未記録")}`,
+        `状態確認: ${escapeHtml(formatDateTime(v.availability_last_checked_at) || "未確認")}`,
+        `保存状況: サムネ ${v.has_archived_thumbnail ? "あり" : "なし"} / 文字起こし ${v.has_archived_transcript ? "あり" : "なし"}`
       ].map(x => `<div>${x}</div>`).join("");
       document.getElementById("detailThumbnailText").textContent = v.thumbnail_text || "未整備";
       document.getElementById("detailScriptText").textContent = t ? t.digest + (t.chars > t.digest.length ? `\n\n... (${fmt.format(t.chars)}文字中、冒頭${fmt.format(t.digest.length)}文字)` : "") : "未取得";
@@ -538,8 +581,8 @@
     }
 
     function downloadCsv(v, t) {
-      const row = [v.video_id, v.channel || "", genreCategory(v), v.genre_tag || "", v.channel_group || "", v.group_role || "", v.title || "", v.youtube_url, preferredThumbnail(v), v.published_at || "", v.fetched_at || "", v.view_count || 0, v.like_count || 0, v.comment_count || 0, rateText(v.like_count, v.view_count), rateText(v.comment_count, v.view_count), t ? t.digest : ""];
-      const csv = ["video_id,channel,genre,genre_tag,channel_group,group_role,title,youtube_url,thumbnail_url,published_at,fetched_at,view_count,like_count,comment_count,like_rate,comment_rate,digest", row.map(csvCell).join(",")].join("\n");
+      const row = [v.video_id, v.channel || "", genreCategory(v), v.genre_tag || "", v.channel_group || "", v.group_role || "", v.availability_status || "unknown", v.last_seen_public_at || "", v.has_archived_thumbnail, v.has_archived_transcript, v.title || "", v.youtube_url, preferredThumbnail(v), v.thumbnail_gcs_uri || "", v.published_at || "", v.fetched_at || "", v.view_count || 0, v.like_count || 0, v.comment_count || 0, rateText(v.like_count, v.view_count), rateText(v.comment_count, v.view_count), t ? t.digest : ""];
+      const csv = ["video_id,channel,genre,genre_tag,channel_group,group_role,availability_status,last_seen_public_at,has_archived_thumbnail,has_archived_transcript,title,youtube_url,thumbnail_url,thumbnail_gcs_uri,published_at,fetched_at,view_count,like_count,comment_count,like_rate,comment_rate,digest", row.map(csvCell).join(",")].join("\n");
       downloadBlob(`${downloadBaseName(v)}.csv`, csv, "text/csv;charset=utf-8");
     }
 
@@ -556,6 +599,18 @@
 
     function rateText(count, views) {
       return `${(rateValue(count, views) * 100).toFixed(2)}%`;
+    }
+
+    function availabilityLabel(value) {
+      if (value === "public") return "公開確認済み";
+      if (value === "suspected_unavailable") return "非公開疑い";
+      if (value === "confirmed_unavailable") return "非公開確認";
+      return "未確認";
+    }
+
+    function gcsConsoleUrl(uri) {
+      const match = String(uri || "").match(/^gs:\/\/([^/]+)\/(.+)$/);
+      return match ? `https://storage.cloud.google.com/${match[1]}/${match[2]}` : "#";
     }
 
     async function downloadThumbnail(v) {

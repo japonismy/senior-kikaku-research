@@ -21,6 +21,9 @@ VIDEO_TABLE = os.environ.get("VIDEO_TABLE", "analysis_competitor_db__videos")
 CHANNEL_TABLE = os.environ.get("CHANNEL_TABLE", "analysis_competitor_db__channels")
 RUN_LOG_TABLE = os.environ.get("RUN_LOG_TABLE", "youtube_metadata_update_runs")
 SNAPSHOT_TABLE = os.environ.get("SNAPSHOT_TABLE", "video_snapshots")
+AVAILABILITY_CHECK_TABLE = os.environ.get("AVAILABILITY_CHECK_TABLE", "video_availability_checks")
+AVAILABILITY_CURRENT_TABLE = os.environ.get("AVAILABILITY_CURRENT_TABLE", "video_availability_current")
+AVAILABILITY_EVENT_TABLE = os.environ.get("AVAILABILITY_EVENT_TABLE", "video_availability_events")
 THUMBNAIL_ASSET_TABLE = os.environ.get("THUMBNAIL_ASSET_TABLE", "thumbnail_assets")
 THUMBNAIL_BUCKET = os.environ.get("THUMBNAIL_BUCKET", "senior-share-staging-570862915709")
 THUMBNAIL_PREFIX = os.environ.get("THUMBNAIL_PREFIX", "senior_reading_thumbnails")
@@ -30,6 +33,7 @@ SLEEP_SEC = float(os.environ.get("SLEEP_SEC", "0.1"))
 DISCOVER_RECENT_UPLOADS = os.environ.get("DISCOVER_RECENT_UPLOADS", "1") != "0"
 DISCOVERY_UPLOADS_PER_CHANNEL = int(os.environ.get("DISCOVERY_UPLOADS_PER_CHANNEL", "20"))
 TARGET_CHANNEL_IDS = [v.strip() for v in os.environ.get("TARGET_CHANNEL_IDS", "").split(",") if v.strip()]
+AVAILABILITY_CONFIRM_MISSES = max(2, int(os.environ.get("AVAILABILITY_CONFIRM_MISSES", "2")))
 
 
 def main() -> int:
@@ -43,6 +47,7 @@ def main() -> int:
 
     ensure_run_log_table(client)
     ensure_snapshot_table(client)
+    ensure_availability_tables(client)
     ensure_thumbnail_asset_table(client)
     ids = fetch_target_video_ids(client)
     discovered_ids: list[str] = []
@@ -57,6 +62,7 @@ def main() -> int:
         ids = ids[:LIMIT]
 
     updated_rows = []
+    availability_checks = []
     missing = 0
     skipped_short = 0
     errors = discovery_errors[:]
@@ -86,7 +92,9 @@ def main() -> int:
             item = items.get(video_id)
             if not item:
                 missing += 1
+                availability_checks.append(make_availability_check(run_id, video_id, "missing_api", fetched_at))
                 continue
+            availability_checks.append(make_availability_check(run_id, video_id, "public", fetched_at))
             row = make_update_row(video_id, item, fetched_at)
             duration_sec = row.get("duration_sec")
             if duration_sec is not None and duration_sec < 120:
@@ -98,6 +106,10 @@ def main() -> int:
     if updated_rows:
         merge_video_updates(client, updated_rows)
         merge_video_snapshots(client, updated_rows)
+
+    availability_stats = {"checked": 0, "events": 0, "suspected": 0, "confirmed": 0, "restored": 0}
+    if availability_checks:
+        availability_stats = persist_availability_checks(client, availability_checks)
 
     thumbnail_stats = {"checked": 0, "downloaded": 0, "skipped": 0, "failed": 0}
     if DOWNLOAD_THUMBNAILS and updated_rows:
@@ -120,6 +132,11 @@ def main() -> int:
             "thumbnail_checked": thumbnail_stats["checked"],
             "thumbnail_downloaded": thumbnail_stats["downloaded"],
             "thumbnail_failed": thumbnail_stats["failed"],
+            "availability_checked": availability_stats["checked"],
+            "availability_events": availability_stats["events"],
+            "availability_suspected": availability_stats["suspected"],
+            "availability_confirmed": availability_stats["confirmed"],
+            "availability_restored": availability_stats["restored"],
             "error": "\n".join(errors)[:2000],
         },
     )
@@ -135,6 +152,11 @@ def main() -> int:
         "thumbnail_checked": thumbnail_stats["checked"],
         "thumbnail_downloaded": thumbnail_stats["downloaded"],
         "thumbnail_failed": thumbnail_stats["failed"],
+        "availability_checked": availability_stats["checked"],
+        "availability_events": availability_stats["events"],
+        "availability_suspected": availability_stats["suspected"],
+        "availability_confirmed": availability_stats["confirmed"],
+        "availability_restored": availability_stats["restored"],
     }, ensure_ascii=False))
     return 0 if updated_rows else 1
 
@@ -154,10 +176,16 @@ def load_api_keys() -> list[tuple[str, str]]:
     single = os.environ.get("YOUTUBE_API_KEY", "").strip()
     if single and not any(v == single for _, v in keys):
         keys.insert(0, ("default", single))
+    primary = os.environ.get("YOUTUBE_API_KEY_PRIMARY", "").strip()
+    fallback = os.environ.get("YOUTUBE_API_KEY_FALLBACK", "").strip()
+    for name, value in reversed([("primary", primary), ("fallback", fallback)]):
+        if value and not any(existing == value for _, existing in keys):
+            keys.insert(0, (name, value))
     return keys
 
 
 def fetch_target_video_ids(client: bigquery.Client) -> list[str]:
+    target_filter = "AND v.channel_id IN UNNEST(@target_channel_ids)" if TARGET_CHANNEL_IDS else ""
     sql = f"""
     SELECT v.video_id
     FROM `{PROJECT_ID}.{DATASET}.{VIDEO_TABLE}` v
@@ -169,21 +197,21 @@ def fetch_target_video_ids(client: bigquery.Client) -> list[str]:
       AND COALESCE(c.include, 1) = 1
       AND COALESCE(c.source_type, '') != 'original_kr'
       AND (v.duration_sec IS NULL OR v.duration_sec >= 120)
-      AND (
-        ARRAY_LENGTH(@target_channel_ids) = 0
-        OR v.channel_id IN UNNEST(@target_channel_ids)
-      )
+      {target_filter}
     ORDER BY COALESCE(v.view_count, 0) DESC
     """
-    config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS),
-        ]
-    )
+    config = None
+    if TARGET_CHANNEL_IDS:
+        config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS),
+            ]
+        )
     return [row.video_id for row in client.query(sql, job_config=config).result()]
 
 
 def fetch_target_channels(client: bigquery.Client) -> list[str]:
+    target_filter = "AND channel_id IN UNNEST(@target_channel_ids)" if TARGET_CHANNEL_IDS else ""
     sql = f"""
     SELECT DISTINCT channel_id
     FROM `{PROJECT_ID}.{DATASET}.{CHANNEL_TABLE}`
@@ -192,17 +220,16 @@ def fetch_target_channels(client: bigquery.Client) -> list[str]:
       AND sync_target = 'senior_reading'
       AND COALESCE(include, 1) = 1
       AND COALESCE(source_type, '') != 'original_kr'
-      AND (
-        ARRAY_LENGTH(@target_channel_ids) = 0
-        OR channel_id IN UNNEST(@target_channel_ids)
-      )
+      {target_filter}
     ORDER BY channel_id
     """
-    config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS),
-        ]
-    )
+    config = None
+    if TARGET_CHANNEL_IDS:
+        config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS),
+            ]
+        )
     return [row.channel_id for row in client.query(sql, job_config=config).result()]
 
 
@@ -328,6 +355,191 @@ def make_update_row(video_id: str, item: dict, fetched_at: datetime) -> dict:
         "duration_sec": parse_iso8601_duration_seconds(duration),
         "fetched_at": fetched_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def make_availability_check(run_id: str, video_id: str, raw_status: str, checked_at: datetime) -> dict:
+    return {
+        "check_date": checked_at.date().isoformat(),
+        "video_id": video_id,
+        "checked_at": checked_at.isoformat(),
+        "raw_status": raw_status,
+        "source": "youtube_data_api_v3",
+        "returned_by_api": raw_status == "public",
+        "error_code": "",
+        "run_id": run_id,
+    }
+
+
+def derive_availability_state(previous: dict | None, check: dict) -> tuple[dict, dict | None]:
+    previous = previous or {}
+    checked_at = check["checked_at"]
+    old_status = previous.get("status") or ""
+    raw_status = check["raw_status"]
+
+    if raw_status == "public":
+        new_status = "public"
+        consecutive_missing = 0
+        first_missing_at = None
+        confirmed_unavailable_at = None
+        last_seen_public_at = checked_at
+    else:
+        was_missing = old_status in {"suspected_unavailable", "confirmed_unavailable"}
+        consecutive_missing = int(previous.get("consecutive_missing_count") or 0) + 1 if was_missing else 1
+        new_status = (
+            "confirmed_unavailable"
+            if consecutive_missing >= AVAILABILITY_CONFIRM_MISSES
+            else "suspected_unavailable"
+        )
+        first_missing_at = timestamp_text(previous.get("first_missing_at")) if was_missing else checked_at
+        last_seen_public_at = timestamp_text(previous.get("last_seen_public_at"))
+        if new_status == "confirmed_unavailable":
+            confirmed_unavailable_at = timestamp_text(previous.get("confirmed_unavailable_at")) or checked_at
+        else:
+            confirmed_unavailable_at = None
+
+    state = {
+        "video_id": check["video_id"],
+        "status": new_status,
+        "previous_status": old_status,
+        "last_checked_at": checked_at,
+        "last_seen_public_at": last_seen_public_at,
+        "first_missing_at": first_missing_at,
+        "confirmed_unavailable_at": confirmed_unavailable_at,
+        "consecutive_missing_count": consecutive_missing,
+        "last_raw_status": raw_status,
+        "last_source": check["source"],
+        "last_run_id": check["run_id"],
+    }
+
+    should_emit = (bool(old_status) and old_status != new_status) or (not old_status and new_status != "public")
+    if not should_emit:
+        return state, None
+    event = {
+        "event_id": str(uuid4()),
+        "event_date": checked_at[:10],
+        "video_id": check["video_id"],
+        "event_at": checked_at,
+        "previous_status": old_status,
+        "new_status": new_status,
+        "raw_status": raw_status,
+        "source": check["source"],
+        "run_id": check["run_id"],
+        "consecutive_missing_count": consecutive_missing,
+        "last_seen_public_at": last_seen_public_at,
+        "first_missing_at": first_missing_at,
+    }
+    return state, event
+
+
+def persist_availability_checks(client: bigquery.Client, checks: list[dict]) -> dict[str, int]:
+    previous = fetch_current_availability(client, [row["video_id"] for row in checks])
+    current_rows = []
+    events = []
+    for check in checks:
+        state, event = derive_availability_state(previous.get(check["video_id"]), check)
+        current_rows.append(state)
+        previous[check["video_id"]] = state
+        if event:
+            events.append(event)
+
+    append_json_rows(client, AVAILABILITY_CHECK_TABLE, checks, availability_check_schema())
+    merge_availability_current(client, current_rows)
+    backfill_last_seen_public_at(client)
+    if events:
+        append_json_rows(client, AVAILABILITY_EVENT_TABLE, events, availability_event_schema())
+
+    return {
+        "checked": len(checks),
+        "events": len(events),
+        "suspected": sum(1 for row in events if row["new_status"] == "suspected_unavailable"),
+        "confirmed": sum(1 for row in events if row["new_status"] == "confirmed_unavailable"),
+        "restored": sum(1 for row in events if row["new_status"] == "public"),
+    }
+
+
+def backfill_last_seen_public_at(client: bigquery.Client) -> None:
+    sql = f"""
+    UPDATE `{PROJECT_ID}.{DATASET}.{AVAILABILITY_CURRENT_TABLE}` T
+    SET last_seen_public_at = S.last_seen_public_at
+    FROM (
+      SELECT video_id, MAX(fetched_at) AS last_seen_public_at
+      FROM `{PROJECT_ID}.{DATASET}.{SNAPSHOT_TABLE}`
+      GROUP BY video_id
+    ) S
+    WHERE T.video_id = S.video_id
+      AND T.last_seen_public_at IS NULL
+    """
+    client.query(sql).result()
+
+
+def fetch_current_availability(client: bigquery.Client, video_ids: list[str]) -> dict[str, dict]:
+    if not video_ids:
+        return {}
+    sql = f"""
+    SELECT *
+    FROM `{PROJECT_ID}.{DATASET}.{AVAILABILITY_CURRENT_TABLE}`
+    WHERE video_id IN UNNEST(@video_ids)
+    """
+    config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ArrayQueryParameter("video_ids", "STRING", dedupe(video_ids))]
+    )
+    return {row.video_id: dict(row) for row in client.query(sql, job_config=config).result()}
+
+
+def append_json_rows(client: bigquery.Client, table_name: str, rows: list[dict], schema: list[bigquery.SchemaField]) -> None:
+    if not rows:
+        return
+    client.load_table_from_json(
+        rows,
+        f"{PROJECT_ID}.{DATASET}.{table_name}",
+        job_config=bigquery.LoadJobConfig(
+            schema=schema,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        ),
+    ).result()
+
+
+def merge_availability_current(client: bigquery.Client, rows: list[dict]) -> None:
+    if not rows:
+        return
+    temp_table = f"{PROJECT_ID}.{DATASET}._tmp_video_availability_{uuid4().hex}"
+    client.load_table_from_json(
+        rows,
+        temp_table,
+        job_config=bigquery.LoadJobConfig(
+            schema=availability_current_schema(),
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        ),
+    ).result()
+    sql = f"""
+    MERGE `{PROJECT_ID}.{DATASET}.{AVAILABILITY_CURRENT_TABLE}` T
+    USING `{temp_table}` S
+    ON T.video_id = S.video_id
+    WHEN MATCHED THEN UPDATE SET
+      status = S.status,
+      previous_status = S.previous_status,
+      last_checked_at = S.last_checked_at,
+      last_seen_public_at = S.last_seen_public_at,
+      first_missing_at = S.first_missing_at,
+      confirmed_unavailable_at = S.confirmed_unavailable_at,
+      consecutive_missing_count = S.consecutive_missing_count,
+      last_raw_status = S.last_raw_status,
+      last_source = S.last_source,
+      last_run_id = S.last_run_id
+    WHEN NOT MATCHED THEN INSERT (
+      video_id, status, previous_status, last_checked_at, last_seen_public_at,
+      first_missing_at, confirmed_unavailable_at, consecutive_missing_count,
+      last_raw_status, last_source, last_run_id
+    ) VALUES (
+      S.video_id, S.status, S.previous_status, S.last_checked_at, S.last_seen_public_at,
+      S.first_missing_at, S.confirmed_unavailable_at, S.consecutive_missing_count,
+      S.last_raw_status, S.last_source, S.last_run_id
+    )
+    """
+    try:
+        client.query(sql).result()
+    finally:
+        client.delete_table(temp_table, not_found_ok=True)
 
 
 def best_thumbnail_url(thumbs: dict) -> str:
@@ -589,6 +801,11 @@ def ensure_run_log_table(client: bigquery.Client) -> None:
             bigquery.SchemaField("thumbnail_checked", "INT64"),
             bigquery.SchemaField("thumbnail_downloaded", "INT64"),
             bigquery.SchemaField("thumbnail_failed", "INT64"),
+            bigquery.SchemaField("availability_checked", "INT64"),
+            bigquery.SchemaField("availability_events", "INT64"),
+            bigquery.SchemaField("availability_suspected", "INT64"),
+            bigquery.SchemaField("availability_confirmed", "INT64"),
+            bigquery.SchemaField("availability_restored", "INT64"),
             bigquery.SchemaField("error", "STRING"),
         ],
     )
@@ -602,6 +819,11 @@ def ensure_run_log_table(client: bigquery.Client) -> None:
             ("thumbnail_failed", "INT64"),
             ("discovered_count", "INT64"),
             ("skipped_short_count", "INT64"),
+            ("availability_checked", "INT64"),
+            ("availability_events", "INT64"),
+            ("availability_suspected", "INT64"),
+            ("availability_confirmed", "INT64"),
+            ("availability_restored", "INT64"),
         ],
     )
 
@@ -649,6 +871,77 @@ def ensure_snapshot_table(client: bigquery.Client) -> None:
     )
 
 
+def availability_check_schema() -> list[bigquery.SchemaField]:
+    return [
+        bigquery.SchemaField("check_date", "DATE"),
+        bigquery.SchemaField("video_id", "STRING"),
+        bigquery.SchemaField("checked_at", "TIMESTAMP"),
+        bigquery.SchemaField("raw_status", "STRING"),
+        bigquery.SchemaField("source", "STRING"),
+        bigquery.SchemaField("returned_by_api", "BOOLEAN"),
+        bigquery.SchemaField("error_code", "STRING"),
+        bigquery.SchemaField("run_id", "STRING"),
+    ]
+
+
+def availability_current_schema() -> list[bigquery.SchemaField]:
+    return [
+        bigquery.SchemaField("video_id", "STRING"),
+        bigquery.SchemaField("status", "STRING"),
+        bigquery.SchemaField("previous_status", "STRING"),
+        bigquery.SchemaField("last_checked_at", "TIMESTAMP"),
+        bigquery.SchemaField("last_seen_public_at", "TIMESTAMP"),
+        bigquery.SchemaField("first_missing_at", "TIMESTAMP"),
+        bigquery.SchemaField("confirmed_unavailable_at", "TIMESTAMP"),
+        bigquery.SchemaField("consecutive_missing_count", "INT64"),
+        bigquery.SchemaField("last_raw_status", "STRING"),
+        bigquery.SchemaField("last_source", "STRING"),
+        bigquery.SchemaField("last_run_id", "STRING"),
+    ]
+
+
+def availability_event_schema() -> list[bigquery.SchemaField]:
+    return [
+        bigquery.SchemaField("event_id", "STRING"),
+        bigquery.SchemaField("event_date", "DATE"),
+        bigquery.SchemaField("video_id", "STRING"),
+        bigquery.SchemaField("event_at", "TIMESTAMP"),
+        bigquery.SchemaField("previous_status", "STRING"),
+        bigquery.SchemaField("new_status", "STRING"),
+        bigquery.SchemaField("raw_status", "STRING"),
+        bigquery.SchemaField("source", "STRING"),
+        bigquery.SchemaField("run_id", "STRING"),
+        bigquery.SchemaField("consecutive_missing_count", "INT64"),
+        bigquery.SchemaField("last_seen_public_at", "TIMESTAMP"),
+        bigquery.SchemaField("first_missing_at", "TIMESTAMP"),
+    ]
+
+
+def ensure_availability_tables(client: bigquery.Client) -> None:
+    checks = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{AVAILABILITY_CHECK_TABLE}",
+        schema=availability_check_schema(),
+    )
+    checks.time_partitioning = bigquery.TimePartitioning(field="check_date")
+    checks.clustering_fields = ["video_id", "raw_status"]
+    client.create_table(checks, exists_ok=True)
+
+    current = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{AVAILABILITY_CURRENT_TABLE}",
+        schema=availability_current_schema(),
+    )
+    current.clustering_fields = ["status", "video_id"]
+    client.create_table(current, exists_ok=True)
+
+    events = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{AVAILABILITY_EVENT_TABLE}",
+        schema=availability_event_schema(),
+    )
+    events.time_partitioning = bigquery.TimePartitioning(field="event_date")
+    events.clustering_fields = ["video_id", "new_status"]
+    client.create_table(events, exists_ok=True)
+
+
 def ensure_columns(client: bigquery.Client, table_name: str, columns: list[tuple[str, str]]) -> None:
     table = client.get_table(f"{PROJECT_ID}.{DATASET}.{table_name}")
     existing = {field.name for field in table.schema}
@@ -673,6 +966,14 @@ def chunks(values: list[str], size: int):
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def timestamp_text(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 def dedupe(values: list[str]) -> list[str]:

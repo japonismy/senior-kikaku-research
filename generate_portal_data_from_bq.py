@@ -125,6 +125,13 @@ def fetch_videos(client, project_id: str, dataset: str, limit: int) -> list[dict
       COALESCE(v.tags, '') AS tags,
       COALESCE(v.fetched_at, '') AS fetched_at,
       COALESCE(a.gcs_uri, '') AS thumbnail_gcs_uri,
+      COALESCE(av.status, 'unknown') AS availability_status,
+      CAST(av.last_checked_at AS STRING) AS availability_last_checked_at,
+      CAST(av.last_seen_public_at AS STRING) AS last_seen_public_at,
+      CAST(av.first_missing_at AS STRING) AS first_missing_at,
+      CAST(av.confirmed_unavailable_at AS STRING) AS confirmed_unavailable_at,
+      COALESCE(av.consecutive_missing_count, 0) AS consecutive_missing_count,
+      IF(tx.video_id IS NULL, FALSE, TRUE) AS has_archived_transcript,
       COALESCE(o.combined_text, '') AS combined_text,
       COALESCE(o.emphasis_text, '') AS emphasis_text,
       COALESCE(o.narration_text, '') AS narration_text,
@@ -146,6 +153,11 @@ def fetch_videos(client, project_id: str, dataset: str, limit: int) -> list[dict
     LEFT JOIN `{project_id}.{dataset}.thumbnail_assets` a
       ON a.video_id = v.video_id
       AND COALESCE(a.error, '') = ''
+    LEFT JOIN `{project_id}.{dataset}.video_availability_current` av
+      ON av.video_id = v.video_id
+    LEFT JOIN `{project_id}.{dataset}.analysis_competitor_db__transcripts` tx
+      ON tx.video_id = v.video_id
+      AND COALESCE(tx.transcript_text, '') != ''
     WHERE COALESCE(v.thumbnail_url, '') != ''
       AND c.sync_target = 'senior_reading'
       AND COALESCE(c.include, 1) = 1
@@ -254,6 +266,14 @@ def make_video_record(row: dict) -> dict:
             row.get("thumbnail_url") or "",
         ],
         "thumbnail_gcs_uri": row.get("thumbnail_gcs_uri") or "",
+        "has_archived_thumbnail": bool(row.get("thumbnail_gcs_uri")),
+        "has_archived_transcript": bool(row.get("has_archived_transcript")),
+        "availability_status": row.get("availability_status") or "unknown",
+        "availability_last_checked_at": row.get("availability_last_checked_at") or "",
+        "last_seen_public_at": row.get("last_seen_public_at") or "",
+        "first_missing_at": row.get("first_missing_at") or "",
+        "confirmed_unavailable_at": row.get("confirmed_unavailable_at") or "",
+        "consecutive_missing_count": row.get("consecutive_missing_count") or 0,
         "youtube_url": f"https://www.youtube.com/watch?v={vid}",
         "fetched_at": row.get("fetched_at") or "",
         "thumbnail_text": thumbnail_text,
@@ -303,6 +323,11 @@ def parse_json_object(value: object) -> dict:
     text = compact_text(value)
     if not text:
         return {}
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
 
 
 def decode_b64(value: object) -> str:
@@ -313,11 +338,6 @@ def decode_b64(value: object) -> str:
         return base64.b64decode(text).decode("utf-8", "replace")
     except Exception:
         return ""
-    try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        return {}
 
 
 def parse_tags(value: object) -> list[str]:

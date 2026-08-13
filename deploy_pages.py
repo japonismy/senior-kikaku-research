@@ -55,6 +55,7 @@ def main() -> int:
         "update_youtube_metadata.py",
         "run_maintenance_batch.py",
         "deploy_pages.py",
+        "cloud_batch",
     ])
     status = subprocess.run(
         ["git", "status", "--short"],
