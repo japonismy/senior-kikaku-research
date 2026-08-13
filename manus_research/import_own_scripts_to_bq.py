@@ -253,11 +253,12 @@ def create_calibration_review_view(client: bigquery.Client) -> None:
       JSON_VALUE(p.classification_json, '$.primary_cluster') = JSON_VALUE(r.result_json, '$.primary_structure') AS primary_agreement,
       JSON_VALUE(p.classification_json, '$.director_card') = JSON_VALUE(r.result_json, '$.director_card') AS card_agreement,
       JSON_VALUE(p.classification_json, '$.food_role') = JSON_VALUE(r.result_json, '$.food_role') AS food_role_agreement,
-      r.needs_review OR COALESCE(r.confidence, 0) < 0.75
-        OR JSON_VALUE(p.classification_json, '$.primary_cluster') != JSON_VALUE(r.result_json, '$.primary_structure')
-        OR JSON_VALUE(p.classification_json, '$.director_card') != JSON_VALUE(r.result_json, '$.director_card')
-        OR JSON_VALUE(p.classification_json, '$.food_role') != JSON_VALUE(r.result_json, '$.food_role')
-        AS needs_human_calibration_review,
+      r.entity_id IS NOT NULL AND (
+        r.needs_review OR COALESCE(r.confidence, 0) < 0.75
+          OR JSON_VALUE(p.classification_json, '$.primary_cluster') != JSON_VALUE(r.result_json, '$.primary_structure')
+          OR JSON_VALUE(p.classification_json, '$.director_card') != JSON_VALUE(r.result_json, '$.director_card')
+          OR JSON_VALUE(p.classification_json, '$.food_role') != JSON_VALUE(r.result_json, '$.food_role')
+      ) AS needs_human_calibration_review,
       r.result_json, r.updated_at
     FROM `{PROJECT_ID}.{DATASET}.research_calibration_cases` k
     LEFT JOIN prior p ON p.audit_id=k.audit_id
