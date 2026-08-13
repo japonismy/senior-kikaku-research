@@ -290,7 +290,7 @@ def mark_completed(row: dict[str, Any], task_id: str, profile: str, output: dict
         value["confidence"] = confidence_value / 10
     elif 10 < confidence_value <= 100:
         value["confidence"] = confidence_value / 100
-    quality_errors = validate_output_quality(row["task_type"], value)
+    quality_errors = validate_output_quality(row["task_type"], value, expected_video_id=row["video_id"])
     if quality_errors:
         value["needs_review"] = True
         prior_reason = str(value.get("review_reason") or "").strip()
@@ -340,8 +340,11 @@ def mark_completed(row: dict[str, Any], task_id: str, profile: str, output: dict
     })
 
 
-def validate_output_quality(task_type: str, value: dict[str, Any]) -> list[str]:
+def validate_output_quality(task_type: str, value: dict[str, Any], expected_video_id: str = "") -> list[str]:
     errors: list[str] = []
+    payload_video_id = str(value.get("video_id") or "")
+    if expected_video_id and payload_video_id != expected_video_id:
+        errors.append(f"video_id不一致: expected={expected_video_id}, actual={payload_video_id or '(empty)'}")
     if float(value.get("confidence") or 0) <= 0:
         errors.append("confidenceが0")
     if float(value.get("confidence") or 0) > 1:
@@ -368,9 +371,30 @@ def validate_output_quality(task_type: str, value: dict[str, Any]) -> list[str]:
     return errors
 
 
+def assert_no_running_queue() -> None:
+    rows = bq_query(
+        f"""
+        SELECT queue_id, entity_id, task_type
+        FROM `{PROJECT_ID}.{DATASET}.research_processing_queue`
+        WHERE status='running'
+        ORDER BY updated_at
+        LIMIT 1
+        """,
+        json_output=True,
+    )
+    if rows:
+        active = rows[0]
+        raise RuntimeError(
+            "未回収のManusタスクがあります。新規送信前にpollで回収してください: "
+            f"{active.get('queue_id')} ({active.get('task_type')})"
+        )
+
+
 def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_id: str) -> list[dict[str, str]]:
     if task_type not in SCHEMAS:
         raise ValueError(f"Unsupported task type: {task_type}")
+    if not dry_run:
+        assert_no_running_queue()
     schema = json.loads(SCHEMAS[task_type].read_text(encoding="utf-8"))
     rows = fetch_pending(task_type, limit)
     submitted: list[dict[str, str]] = []
