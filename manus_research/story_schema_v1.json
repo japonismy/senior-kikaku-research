@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "properties": {
+    "video_id": {"type": "string"},
+    "emotional_contract": {"type": "string", "enum": ["child_rescue", "mother_child_rescue", "elderly_rescue", "family_reunion", "bereavement_healing", "skill_recognition", "social_rehabilitation", "gratitude_repayment", "other"]},
+    "primary_structure": {"type": "string", "enum": ["P01B", "P02A", "P03A", "P03B", "P04", "P06A", "P06B", "P07", "NEW", "OTHER"]},
+    "director_card": {"type": "string", "enum": ["R1", "R2", "R3", "R4", "R5", "OTHER"]},
+    "rescue_direction": {"type": "string", "enum": ["adult_to_child", "child_to_adult", "mutual", "community", "authority_to_weak", "self_recovery", "other"]},
+    "midpoint_mechanism": {"type": "string", "enum": ["truth_reveal", "skill_proof", "new_threat", "health_crisis", "identity_reveal", "community_mobilization", "relationship_shift", "other"]},
+    "climax_resolution": {"type": "string", "enum": ["self_action", "collective_action", "authority_intervention", "evidence_reveal", "skill_demonstration", "sacrifice", "other"]},
+    "ending_reward": {"type": "string", "enum": ["found_family", "business_recovery", "inheritance_succession", "social_return", "vindication", "romance_marriage", "goodwill_cycle", "other"]},
+    "food_role": {"type": "string", "enum": ["none", "stage", "support", "cause", "resolution"]},
+    "plot_fingerprint": {
+      "type": "object",
+      "properties": {
+        "pain_hook": {"type": "string"},
+        "inciting_event": {"type": "string"},
+        "repeated_actions": {"type": "array", "items": {"type": "string"}},
+        "midpoint_change": {"type": "string"},
+        "crisis": {"type": "string"},
+        "proof_or_reveal": {"type": "string"},
+        "solution_actor": {"type": "string"},
+        "ending": {"type": "string"}
+      },
+      "required": ["pain_hook", "inciting_event", "repeated_actions", "midpoint_change", "crisis", "proof_or_reveal", "solution_actor", "ending"],
+      "additionalProperties": false
+    },
+    "similarity_risk_signature": {"type": "array", "items": {"type": "string"}},
+    "novelty_sources": {"type": "array", "items": {"type": "string"}},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "hook_strength": {"type": "integer"},
+    "midpoint_strength": {"type": "integer"},
+    "ending_satisfaction": {"type": "integer"},
+    "exchangeability_risk": {"type": "integer"},
+    "confidence": {"type": "number"},
+    "needs_review": {"type": "boolean"},
+    "review_reason": {"type": "string"}
+  },
+  "required": ["video_id", "emotional_contract", "primary_structure", "director_card", "rescue_direction", "midpoint_mechanism", "climax_resolution", "ending_reward", "food_role", "plot_fingerprint", "similarity_risk_signature", "novelty_sources", "evidence", "hook_strength", "midpoint_strength", "ending_satisfaction", "exchangeability_risk", "confidence", "needs_review", "review_reason"],
+  "additionalProperties": false
+}

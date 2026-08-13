@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "video_id": {"type": "string"},
+    "subject_count": {"type": "string", "enum": ["0", "1", "2", "3_plus"]},
+    "primary_subject": {"type": "string", "enum": ["child", "mother_child", "elderly_man", "elderly_woman", "adult_man", "adult_woman", "family", "food", "building_business", "other"]},
+    "relationship_cue": {"type": "string", "enum": ["rescue", "conflict", "separation", "reunion", "care", "work_cooperation", "authority_gap", "unclear"]},
+    "dominant_emotion": {"type": "string", "enum": ["sadness", "fear", "shock", "anger", "relief", "warmth", "determination", "neutral", "mixed"]},
+    "gaze_pattern": {"type": "string", "enum": ["camera", "each_other", "object", "away", "mixed", "unclear"]},
+    "composition": {"type": "string", "enum": ["face_closeup", "two_person_contrast", "group_scene", "wide_environment", "before_after_split", "object_centered", "other"]},
+    "text_density": {"type": "string", "enum": ["none", "low", "medium", "high"]},
+    "visual_promise": {"type": "string", "enum": ["rescue_and_tears", "dramatic_reversal", "hidden_identity", "food_miracle", "family_rebirth", "skill_proof", "social_punishment", "other"]},
+    "curiosity_device": {"type": "string", "enum": ["unexplained_object", "extreme_condition", "relationship_gap", "future_result", "identity_question", "emotional_expression", "none", "other"]},
+    "food_visibility": {"type": "string", "enum": ["none", "minor", "prominent"]},
+    "background_type": {"type": "string", "enum": ["restaurant", "home", "street", "hospital", "school", "workplace", "nature", "abstract", "other"]},
+    "mobile_legibility": {"type": "integer"},
+    "emotion_immediacy": {"type": "integer"},
+    "story_specificity": {"type": "integer"},
+    "generic_ai_image_risk": {"type": "integer"},
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "weaknesses": {"type": "array", "items": {"type": "string"}},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "number"},
+    "needs_review": {"type": "boolean"},
+    "review_reason": {"type": "string"}
+  },
+  "required": ["video_id", "subject_count", "primary_subject", "relationship_cue", "dominant_emotion", "gaze_pattern", "composition", "text_density", "visual_promise", "curiosity_device", "food_visibility", "background_type", "mobile_legibility", "emotion_immediacy", "story_specificity", "generic_ai_image_risk", "strengths", "weaknesses", "evidence", "confidence", "needs_review", "review_reason"],
+  "additionalProperties": false
+}

@@ -25,6 +25,12 @@ AVAILABILITY_CHECK_TABLE = os.environ.get("AVAILABILITY_CHECK_TABLE", "video_ava
 AVAILABILITY_CURRENT_TABLE = os.environ.get("AVAILABILITY_CURRENT_TABLE", "video_availability_current")
 AVAILABILITY_EVENT_TABLE = os.environ.get("AVAILABILITY_EVENT_TABLE", "video_availability_events")
 THUMBNAIL_ASSET_TABLE = os.environ.get("THUMBNAIL_ASSET_TABLE", "thumbnail_assets")
+RESEARCH_COVERAGE_TABLE = os.environ.get("RESEARCH_COVERAGE_TABLE", "research_data_coverage")
+RESEARCH_QUEUE_TABLE = os.environ.get("RESEARCH_QUEUE_TABLE", "research_processing_queue")
+MANUS_RESULTS_TABLE = os.environ.get("MANUS_RESULTS_TABLE", "manus_classification_results")
+MANUS_RUNS_TABLE = os.environ.get("MANUS_RUNS_TABLE", "manus_task_runs")
+OWN_STRUCTURE_TABLE = os.environ.get("OWN_STRUCTURE_TABLE", "own_script_structure_classifications")
+CALIBRATION_TABLE = os.environ.get("CALIBRATION_TABLE", "research_calibration_cases")
 THUMBNAIL_BUCKET = os.environ.get("THUMBNAIL_BUCKET", "senior-share-staging-570862915709")
 THUMBNAIL_PREFIX = os.environ.get("THUMBNAIL_PREFIX", "senior_reading_thumbnails")
 DOWNLOAD_THUMBNAILS = os.environ.get("DOWNLOAD_THUMBNAILS", "1") != "0"
@@ -33,6 +39,7 @@ SLEEP_SEC = float(os.environ.get("SLEEP_SEC", "0.1"))
 DISCOVER_RECENT_UPLOADS = os.environ.get("DISCOVER_RECENT_UPLOADS", "1") != "0"
 DISCOVERY_UPLOADS_PER_CHANNEL = int(os.environ.get("DISCOVERY_UPLOADS_PER_CHANNEL", "20"))
 TARGET_CHANNEL_IDS = [v.strip() for v in os.environ.get("TARGET_CHANNEL_IDS", "").split(",") if v.strip()]
+SYNC_TARGETS = [v.strip() for v in os.environ.get("SYNC_TARGETS", "senior_reading,self").split(",") if v.strip()]
 AVAILABILITY_CONFIRM_MISSES = max(2, int(os.environ.get("AVAILABILITY_CONFIRM_MISSES", "2")))
 
 
@@ -49,6 +56,7 @@ def main() -> int:
     ensure_snapshot_table(client)
     ensure_availability_tables(client)
     ensure_thumbnail_asset_table(client)
+    ensure_research_tables(client)
     ids = fetch_target_video_ids(client)
     discovered_ids: list[str] = []
     discovery_errors: list[str] = []
@@ -114,6 +122,8 @@ def main() -> int:
     thumbnail_stats = {"checked": 0, "downloaded": 0, "skipped": 0, "failed": 0}
     if DOWNLOAD_THUMBNAILS and updated_rows:
         thumbnail_stats = sync_thumbnail_assets(client, storage_client, updated_rows)
+
+    refresh_research_coverage_and_queue(client)
 
     finished_at = utc_now()
     log_run(
@@ -193,20 +203,21 @@ def fetch_target_video_ids(client: bigquery.Client) -> list[str]:
       ON c.channel_id = v.channel_id
     WHERE v.thumbnail_url IS NOT NULL
       AND v.thumbnail_url != ''
-      AND c.sync_target = 'senior_reading'
-      AND COALESCE(c.include, 1) = 1
+      AND c.sync_target IN UNNEST(@sync_targets)
+      AND (COALESCE(c.include, 1) = 1 OR c.sync_target = 'self')
       AND COALESCE(c.source_type, '') != 'original_kr'
       AND (v.duration_sec IS NULL OR v.duration_sec >= 120)
       {target_filter}
     ORDER BY COALESCE(v.view_count, 0) DESC
     """
-    config = None
+    query_parameters = [
+        bigquery.ArrayQueryParameter("sync_targets", "STRING", SYNC_TARGETS),
+    ]
     if TARGET_CHANNEL_IDS:
-        config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS),
-            ]
+        query_parameters.append(
+            bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS)
         )
+    config = bigquery.QueryJobConfig(query_parameters=query_parameters)
     return [row.video_id for row in client.query(sql, job_config=config).result()]
 
 
@@ -217,19 +228,20 @@ def fetch_target_channels(client: bigquery.Client) -> list[str]:
     FROM `{PROJECT_ID}.{DATASET}.{CHANNEL_TABLE}`
     WHERE channel_id IS NOT NULL
       AND channel_id != ''
-      AND sync_target = 'senior_reading'
-      AND COALESCE(include, 1) = 1
+      AND sync_target IN UNNEST(@sync_targets)
+      AND (COALESCE(include, 1) = 1 OR sync_target = 'self')
       AND COALESCE(source_type, '') != 'original_kr'
       {target_filter}
     ORDER BY channel_id
     """
-    config = None
+    query_parameters = [
+        bigquery.ArrayQueryParameter("sync_targets", "STRING", SYNC_TARGETS),
+    ]
     if TARGET_CHANNEL_IDS:
-        config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS),
-            ]
+        query_parameters.append(
+            bigquery.ArrayQueryParameter("target_channel_ids", "STRING", TARGET_CHANNEL_IDS)
         )
+    config = bigquery.QueryJobConfig(query_parameters=query_parameters)
     return [row.channel_id for row in client.query(sql, job_config=config).result()]
 
 
@@ -869,6 +881,265 @@ def ensure_snapshot_table(client: bigquery.Client) -> None:
             ("fetched_at", "TIMESTAMP"),
         ],
     )
+
+
+def ensure_research_tables(client: bigquery.Client) -> None:
+    coverage = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{RESEARCH_COVERAGE_TABLE}",
+        schema=[
+            bigquery.SchemaField("video_id", "STRING"),
+            bigquery.SchemaField("channel_id", "STRING"),
+            bigquery.SchemaField("channel_name", "STRING"),
+            bigquery.SchemaField("title", "STRING"),
+            bigquery.SchemaField("published_at", "STRING"),
+            bigquery.SchemaField("view_count", "INT64"),
+            bigquery.SchemaField("duration_sec", "FLOAT64"),
+            bigquery.SchemaField("is_self", "BOOLEAN"),
+            bigquery.SchemaField("availability_status", "STRING"),
+            bigquery.SchemaField("has_thumbnail", "BOOLEAN"),
+            bigquery.SchemaField("thumbnail_gcs_uri", "STRING"),
+            bigquery.SchemaField("has_transcript", "BOOLEAN"),
+            bigquery.SchemaField("transcript_chars", "INT64"),
+            bigquery.SchemaField("has_structure", "BOOLEAN"),
+            bigquery.SchemaField("has_thumbnail_classification", "BOOLEAN"),
+            bigquery.SchemaField("in_primary_scope", "BOOLEAN"),
+            bigquery.SchemaField("refreshed_at", "TIMESTAMP"),
+        ],
+    )
+    coverage.clustering_fields = ["channel_id", "is_self", "availability_status"]
+    client.create_table(coverage, exists_ok=True)
+
+    queue = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{RESEARCH_QUEUE_TABLE}",
+        schema=[
+            bigquery.SchemaField("queue_id", "STRING"),
+            bigquery.SchemaField("entity_type", "STRING"),
+            bigquery.SchemaField("entity_id", "STRING"),
+            bigquery.SchemaField("channel_id", "STRING"),
+            bigquery.SchemaField("task_type", "STRING"),
+            bigquery.SchemaField("taxonomy_version", "STRING"),
+            bigquery.SchemaField("priority", "INT64"),
+            bigquery.SchemaField("reason", "STRING"),
+            bigquery.SchemaField("status", "STRING"),
+            bigquery.SchemaField("attempt_count", "INT64"),
+            bigquery.SchemaField("manus_task_id", "STRING"),
+            bigquery.SchemaField("last_error", "STRING"),
+            bigquery.SchemaField("created_at", "TIMESTAMP"),
+            bigquery.SchemaField("updated_at", "TIMESTAMP"),
+        ],
+    )
+    queue.clustering_fields = ["status", "task_type", "channel_id"]
+    client.create_table(queue, exists_ok=True)
+
+    results = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{MANUS_RESULTS_TABLE}",
+        schema=[
+            bigquery.SchemaField("result_id", "STRING"),
+            bigquery.SchemaField("entity_type", "STRING"),
+            bigquery.SchemaField("entity_id", "STRING"),
+            bigquery.SchemaField("task_type", "STRING"),
+            bigquery.SchemaField("taxonomy_version", "STRING"),
+            bigquery.SchemaField("manus_task_id", "STRING"),
+            bigquery.SchemaField("agent_profile", "STRING"),
+            bigquery.SchemaField("result_json", "STRING"),
+            bigquery.SchemaField("confidence", "FLOAT64"),
+            bigquery.SchemaField("needs_review", "BOOLEAN"),
+            bigquery.SchemaField("prompt_hash", "STRING"),
+            bigquery.SchemaField("created_at", "TIMESTAMP"),
+            bigquery.SchemaField("updated_at", "TIMESTAMP"),
+        ],
+    )
+    results.clustering_fields = ["task_type", "taxonomy_version", "entity_id"]
+    client.create_table(results, exists_ok=True)
+
+    runs = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{MANUS_RUNS_TABLE}",
+        schema=[
+            bigquery.SchemaField("manus_task_id", "STRING"),
+            bigquery.SchemaField("queue_id", "STRING"),
+            bigquery.SchemaField("status", "STRING"),
+            bigquery.SchemaField("agent_profile", "STRING"),
+            bigquery.SchemaField("request_json", "STRING"),
+            bigquery.SchemaField("response_json", "STRING"),
+            bigquery.SchemaField("error", "STRING"),
+            bigquery.SchemaField("created_at", "TIMESTAMP"),
+            bigquery.SchemaField("updated_at", "TIMESTAMP"),
+        ],
+    )
+    runs.clustering_fields = ["status", "queue_id"]
+    client.create_table(runs, exists_ok=True)
+
+    own_structures = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{OWN_STRUCTURE_TABLE}",
+        schema=[
+            bigquery.SchemaField("audit_id", "STRING"),
+            bigquery.SchemaField("video_id", "STRING"),
+            bigquery.SchemaField("management_number", "STRING"),
+            bigquery.SchemaField("title", "STRING"),
+            bigquery.SchemaField("taxonomy_version", "STRING"),
+            bigquery.SchemaField("model", "STRING"),
+            bigquery.SchemaField("classification_json", "STRING"),
+            bigquery.SchemaField("classified_at", "TIMESTAMP"),
+            bigquery.SchemaField("source_case", "STRING"),
+            bigquery.SchemaField("imported_at", "TIMESTAMP"),
+        ],
+    )
+    own_structures.clustering_fields = ["video_id", "audit_id", "taxonomy_version"]
+    client.create_table(own_structures, exists_ok=True)
+
+    calibration = bigquery.Table(
+        f"{PROJECT_ID}.{DATASET}.{CALIBRATION_TABLE}",
+        schema=[
+            bigquery.SchemaField("calibration_id", "STRING"),
+            bigquery.SchemaField("batch_id", "STRING"),
+            bigquery.SchemaField("audit_id", "STRING"),
+            bigquery.SchemaField("video_id", "STRING"),
+            bigquery.SchemaField("title", "STRING"),
+            bigquery.SchemaField("source_case", "STRING"),
+            bigquery.SchemaField("script_chars", "INT64"),
+            bigquery.SchemaField("taxonomy_version", "STRING"),
+            bigquery.SchemaField("status", "STRING"),
+            bigquery.SchemaField("selected_at", "TIMESTAMP"),
+            bigquery.SchemaField("updated_at", "TIMESTAMP"),
+        ],
+    )
+    calibration.clustering_fields = ["batch_id", "status", "video_id"]
+    client.create_table(calibration, exists_ok=True)
+
+
+def refresh_research_coverage_and_queue(client: bigquery.Client) -> None:
+    refresh_sql = f"""
+    TRUNCATE TABLE `{PROJECT_ID}.{DATASET}.{RESEARCH_COVERAGE_TABLE}`;
+    INSERT INTO `{PROJECT_ID}.{DATASET}.{RESEARCH_COVERAGE_TABLE}` (
+      video_id, channel_id, channel_name, title, published_at, view_count, duration_sec,
+      is_self, availability_status, has_thumbnail, thumbnail_gcs_uri,
+      has_transcript, transcript_chars, has_structure, has_thumbnail_classification,
+      in_primary_scope, refreshed_at
+    )
+    WITH transcripts AS (
+      SELECT video_id, MAX(LENGTH(COALESCE(transcript_text, ''))) AS transcript_chars
+      FROM `{PROJECT_ID}.{DATASET}.analysis_competitor_db__transcripts`
+      GROUP BY video_id
+    ), thumbnails AS (
+      SELECT video_id, ARRAY_AGG(gcs_uri IGNORE NULLS ORDER BY fetched_at DESC LIMIT 1)[SAFE_OFFSET(0)] AS gcs_uri
+      FROM `{PROJECT_ID}.{DATASET}.{THUMBNAIL_ASSET_TABLE}`
+      WHERE COALESCE(error, '') = ''
+      GROUP BY video_id
+    ), structures AS (
+      SELECT DISTINCT video_id FROM `{PROJECT_ID}.{DATASET}.analysis_competitor_db__structure_analysis`
+      UNION DISTINCT
+      SELECT DISTINCT video_id FROM `{PROJECT_ID}.{DATASET}.{OWN_STRUCTURE_TABLE}` WHERE video_id IS NOT NULL
+    ), thumbnail_classes AS (
+      SELECT DISTINCT video_id
+      FROM `{PROJECT_ID}.{DATASET}.analysis_competitor_db__thumbnail_analysis`
+    ), primary_scope AS (
+      SELECT DISTINCT channel_id
+      FROM `{PROJECT_ID}.{DATASET}.research_channel_scopes`
+      WHERE scope = 'jun_kando_12' AND is_kando_research_target
+    )
+    SELECT
+      v.video_id, v.channel_id, c.channel_name, v.title, v.published_at,
+      CAST(COALESCE(v.view_count, 0) AS INT64), v.duration_sec,
+      c.sync_target = 'self', COALESCE(ac.status, 'unknown'),
+      th.gcs_uri IS NOT NULL, COALESCE(th.gcs_uri, ''),
+      COALESCE(tx.transcript_chars, 0) > 0, COALESCE(tx.transcript_chars, 0),
+      st.video_id IS NOT NULL, tc.video_id IS NOT NULL,
+      c.sync_target = 'self' OR ps.channel_id IS NOT NULL,
+      CURRENT_TIMESTAMP()
+    FROM `{PROJECT_ID}.{DATASET}.{VIDEO_TABLE}` v
+    JOIN `{PROJECT_ID}.{DATASET}.{CHANNEL_TABLE}` c USING(channel_id)
+    LEFT JOIN transcripts tx USING(video_id)
+    LEFT JOIN thumbnails th USING(video_id)
+    LEFT JOIN structures st USING(video_id)
+    LEFT JOIN thumbnail_classes tc USING(video_id)
+    LEFT JOIN primary_scope ps USING(channel_id)
+    LEFT JOIN `{PROJECT_ID}.{DATASET}.{AVAILABILITY_CURRENT_TABLE}` ac USING(video_id)
+    WHERE c.sync_target IN ('senior_reading', 'self')
+      AND (COALESCE(c.include, 1) = 1 OR c.sync_target = 'self')
+      AND COALESCE(c.source_type, '') != 'original_kr'
+      AND (v.duration_sec IS NULL OR v.duration_sec >= 120)
+    """
+    client.query(refresh_sql).result()
+
+    queue_sql = f"""
+    MERGE `{PROJECT_ID}.{DATASET}.{RESEARCH_QUEUE_TABLE}` T
+    USING (
+      SELECT
+        CONCAT(task_type, ':', video_id) AS queue_id,
+        'video' AS entity_type,
+        video_id AS entity_id,
+        channel_id,
+        task_type,
+        taxonomy_version,
+        priority,
+        reason,
+        CURRENT_TIMESTAMP() AS now_at
+      FROM (
+        SELECT video_id, channel_id, 'fetch_transcript' AS task_type, '' AS taxonomy_version,
+          IF(is_self, 100, 60) AS priority,
+          IF(is_self, '自チャンネル台本未接続', '一次調査対象の文字起こし未取得') AS reason
+        FROM `{PROJECT_ID}.{DATASET}.{RESEARCH_COVERAGE_TABLE}`
+        WHERE in_primary_scope AND NOT has_transcript AND availability_status IN ('public', 'unknown')
+        UNION ALL
+        SELECT video_id, channel_id, 'classify_story' AS task_type, 'jinsei_recipe_v1' AS taxonomy_version,
+          CASE
+            WHEN EXISTS (SELECT 1 FROM `{PROJECT_ID}.{DATASET}.{CALIBRATION_TABLE}` k WHERE k.video_id=c.video_id AND k.batch_id='calibration_25_v1') THEN 200
+            WHEN is_self THEN 95 ELSE 70
+          END AS priority,
+          CASE
+            WHEN EXISTS (SELECT 1 FROM `{PROJECT_ID}.{DATASET}.{CALIBRATION_TABLE}` k WHERE k.video_id=c.video_id AND k.batch_id='calibration_25_v1') THEN 'Manus v1校正セット25本'
+            WHEN is_self THEN '自チャンネル校正セット候補' ELSE '競合ストーリー分類未実施'
+          END AS reason
+        FROM `{PROJECT_ID}.{DATASET}.{RESEARCH_COVERAGE_TABLE}` c
+        WHERE in_primary_scope AND has_transcript
+          AND NOT EXISTS (
+            SELECT 1 FROM `{PROJECT_ID}.{DATASET}.{MANUS_RESULTS_TABLE}` r
+            WHERE r.entity_id = c.video_id AND r.task_type = 'classify_story'
+              AND r.taxonomy_version = 'jinsei_recipe_v1'
+          )
+        UNION ALL
+        SELECT video_id, channel_id, 'classify_thumbnail' AS task_type, 'jinsei_recipe_v1' AS taxonomy_version,
+          CASE
+            WHEN EXISTS (SELECT 1 FROM `{PROJECT_ID}.{DATASET}.{CALIBRATION_TABLE}` k WHERE k.video_id=c.video_id AND k.batch_id='calibration_25_v1') THEN 190
+            WHEN is_self THEN 90 ELSE 65
+          END AS priority,
+          CASE
+            WHEN EXISTS (SELECT 1 FROM `{PROJECT_ID}.{DATASET}.{CALIBRATION_TABLE}` k WHERE k.video_id=c.video_id AND k.batch_id='calibration_25_v1') THEN 'Manus v1サムネ校正セット25本'
+            WHEN is_self THEN '自チャンネルサムネ校正セット候補' ELSE '競合サムネ分類未実施'
+          END AS reason
+        FROM `{PROJECT_ID}.{DATASET}.{RESEARCH_COVERAGE_TABLE}` c
+        WHERE in_primary_scope AND has_thumbnail
+          AND NOT EXISTS (
+            SELECT 1 FROM `{PROJECT_ID}.{DATASET}.{MANUS_RESULTS_TABLE}` r
+            WHERE r.entity_id = c.video_id AND r.task_type = 'classify_thumbnail'
+              AND r.taxonomy_version = 'jinsei_recipe_v1'
+          )
+      )
+    ) S
+    ON T.queue_id = S.queue_id
+    WHEN MATCHED AND T.status IN ('pending', 'failed') THEN UPDATE SET
+      priority = S.priority, reason = S.reason, taxonomy_version = S.taxonomy_version,
+      updated_at = S.now_at
+    WHEN NOT MATCHED THEN INSERT (
+      queue_id, entity_type, entity_id, channel_id, task_type, taxonomy_version,
+      priority, reason, status, attempt_count, manus_task_id, last_error, created_at, updated_at
+    ) VALUES (
+      S.queue_id, S.entity_type, S.entity_id, S.channel_id, S.task_type, S.taxonomy_version,
+      S.priority, S.reason, 'pending', 0, '', '', S.now_at, S.now_at
+    )
+    """
+    client.query(queue_sql).result()
+    cleanup_sql = f"""
+    UPDATE `{PROJECT_ID}.{DATASET}.{RESEARCH_QUEUE_TABLE}` q
+    SET status='completed_external', reason='既存またはローカル台本を接続済み', updated_at=CURRENT_TIMESTAMP()
+    WHERE q.task_type='fetch_transcript'
+      AND q.status IN ('pending', 'failed')
+      AND EXISTS (
+        SELECT 1 FROM `{PROJECT_ID}.{DATASET}.{RESEARCH_COVERAGE_TABLE}` c
+        WHERE c.video_id=q.entity_id AND c.has_transcript
+      )
+    """
+    client.query(cleanup_sql).result()
 
 
 def availability_check_schema() -> list[bigquery.SchemaField]:
