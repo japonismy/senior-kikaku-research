@@ -530,7 +530,7 @@
         ? hit.fields.map(x => `<span class="badge hit">${escapeHtml(x)}</span>`).join("")
         : (v.thumbnail_text ? "" : '<span class="badge warn">サムネ文字未整備</span>'));
       return `<article class="card" data-idx="${idx}">
-        <img src="${escapeAttr(preferredThumbnail(v))}" alt="" loading="lazy" onerror="fallbackImage(this, ${idx})">
+        <img src="${escapeAttr(preferredThumbnail(v))}" alt="" loading="lazy" data-thumbnail-attempt="0" onerror="fallbackImage(this, ${idx})">
         <div class="meta">
           <div class="primary-meta">
             <span class="channel-name">${escapeHtml(v.channel || "")}</span>
@@ -550,13 +550,16 @@
     function openDetail(v) {
       const t = transcriptById.get(v.video_id);
       const detailImg = document.getElementById("detailImg");
-      detailImg.dataset.idx = videos.indexOf(v);
+      const videoIdx = videos.indexOf(v);
+      detailImg.dataset.idx = videoIdx;
+      detailImg.dataset.thumbnailAttempt = "0";
+      detailImg.onerror = () => fallbackImage(detailImg, videoIdx);
       detailImg.src = preferredThumbnail(v);
       document.getElementById("detailTitle").textContent = v.title || "";
       document.getElementById("youtubeLink").href = v.youtube_url;
       const archiveLink = document.getElementById("archiveThumbnailLink");
       archiveLink.hidden = !v.thumbnail_gcs_uri;
-      archiveLink.href = gcsConsoleUrl(v.thumbnail_gcs_uri);
+      archiveLink.href = publicGcsUrl(v.thumbnail_gcs_uri) || gcsConsoleUrl(v.thumbnail_gcs_uri);
       document.getElementById("detailMeta").innerHTML = [
         `チャンネル: ${escapeHtml(v.channel || "")}`,
         `ジャンル: ${genreCategory(v) === "kando" ? "感動" : genreCategory(v) === "sukatto" ? "スカッと" : "参考"}`,
@@ -626,16 +629,40 @@
       }
     }
 
+    function publicGcsUrl(uri) {
+      const match = String(uri || "").match(/^gs:\/\/([^/]+)\/(.+)$/);
+      if (!match) return "";
+      const objectPath = match[2].split("/").map(encodeURIComponent).join("/");
+      return `https://storage.googleapis.com/${encodeURIComponent(match[1])}/${objectPath}`;
+    }
+
+    function thumbnailCandidates(v) {
+      if (!v) return [];
+      const archived = publicGcsUrl(v.thumbnail_gcs_uri);
+      const youtube = [
+        v.thumbnail_max_url,
+        v.thumbnail_url,
+        ...(v.thumbnail_fallback_urls || []),
+      ].filter(Boolean);
+      const status = String(v.availability_status || "unknown").toLowerCase();
+      const archiveFirst = archived && !["public", "unknown", ""].includes(status);
+      return [...new Set(archiveFirst ? [archived, ...youtube] : [...youtube, archived].filter(Boolean))];
+    }
+
     function preferredThumbnail(v) {
-      return v.thumbnail_max_url || v.thumbnail_url || "";
+      return thumbnailCandidates(v)[0] || "";
     }
 
     function fallbackImage(img, idx) {
       const v = videos[idx];
-      const urls = (v && v.thumbnail_fallback_urls ? v.thumbnail_fallback_urls : []).filter(Boolean);
-      const current = img.src;
-      const next = urls.find(url => !current.includes(url.split("/").pop()));
-      if (next) img.src = next;
+      const urls = thumbnailCandidates(v);
+      const nextAttempt = Number(img.dataset.thumbnailAttempt || "0") + 1;
+      if (nextAttempt < urls.length) {
+        img.dataset.thumbnailAttempt = String(nextAttempt);
+        img.src = urls[nextAttempt];
+      } else {
+        img.onerror = null;
+      }
     }
 
     function downloadBlob(filename, body, type) {
