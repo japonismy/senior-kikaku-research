@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "batch_id": {"type": "string"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "video_id": {"type": "string"},
+          "alignment_type": {"type": "string", "enum": ["exact", "complementary", "partial_mismatch", "contradictory", "unclear"]},
+          "shared_promise": {"type": "string", "enum": ["rescue", "dramatic_reversal", "mystery_identity", "skill_success", "business_recovery", "family_rebirth", "social_punishment", "other"]},
+          "title_lead": {"type": "string"},
+          "thumbnail_lead": {"type": "string"},
+          "missing_visual_element": {"type": "string"},
+          "recommended_direction": {"type": "string", "enum": ["keep", "change_title", "change_thumbnail", "test_both", "manual_review"]},
+          "rationale": {"type": "string"},
+          "confidence": {"type": "number"},
+          "needs_review": {"type": "boolean"},
+          "review_reason": {"type": "string"}
+        },
+        "required": ["video_id", "alignment_type", "shared_promise", "title_lead", "thumbnail_lead", "missing_visual_element", "recommended_direction", "rationale", "confidence", "needs_review", "review_reason"],
+        "additionalProperties": false
+      }
+    },
+    "batch_confidence": {"type": "number"},
+    "needs_review": {"type": "boolean"},
+    "review_reason": {"type": "string"}
+  },
+  "required": ["batch_id", "items", "batch_confidence", "needs_review", "review_reason"],
+  "additionalProperties": false
+}

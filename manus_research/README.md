@@ -8,9 +8,13 @@
 - `classification_definitions_v1.json`: P型・Rカードの判定定義
 - `story_schema_v1.json`: 台本分類の出力スキーマ
 - `thumbnail_schema_v1.json`: サムネ分類の出力スキーマ
+- `title_batch_schema_v1.json`: 校正25本のタイトル盲検一括分類スキーマ
+- `title_thumbnail_alignment_schema_v1.json`: タイトルとサムネイルの約束整合性スキーマ
 - `build_calibration_set.py`: 再生実績5分位から校正25本を作成
 - `analyze_calibrated_performance.py`: 人間校正済み分類へYouTube Analyticsとリーチ指標を結合し、構造別実績をCSV・JSON・BigQueryへ保存
 - `analyze_thumbnail_performance.py`: Manusのサムネイル視覚分類を校正25本の実績へ結合し、P03B・P06B別に集計
+- `classify_titles_batch.py`: タイトル25本の盲検分類と、サムネイルとの一致・補完・食い違い判定を2段階で実行
+- `analyze_title_alignment_performance.py`: タイトル分類・サムネイル整合性・台本構造・YouTube実績を結合して集計
 - `import_own_scripts_to_bq.py`: 完成台本・既存分類・校正セットをBigQueryへ接続
 - `manus_pipeline.py`: Manusへ順次送信し、最新ターンのJSONを品質検証して保存
 
@@ -28,6 +32,8 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 & $python .\manus_research\build_calibration_set.py
 & $python .\manus_research\analyze_calibrated_performance.py
 & $python .\manus_research\analyze_thumbnail_performance.py
+& $python .\manus_research\classify_titles_batch.py
+& $python .\manus_research\analyze_title_alignment_performance.py
 & $python .\manus_research\import_own_scripts_to_bq.py
 ```
 
@@ -68,6 +74,9 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 - `manus_calibration_review_v1`: 既存分類との一致・不一致レビュー
 - `manus_calibration_performance_v1`: 人間校正済み25本と最新の再生・視聴維持・CTR・登録転換を結合した実績表
 - `manus_calibration_thumbnail_performance_v1`: 校正25本のサムネイル視覚分類と実績の結合表
+- `manus_title_calibration_v1`: 校正25本のタイトル分類
+- `manus_title_thumbnail_alignment_v1`: 校正25本のタイトル・サムネイル整合性判定
+- `manus_title_thumbnail_performance_v1`: タイトル・サムネイル整合性と台本・実績の結合表
 
 ## 注意
 

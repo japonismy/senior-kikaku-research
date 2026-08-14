@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "batch_id": {"type": "string"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "video_id": {"type": "string"},
+          "protagonist_frame": {"type": "string", "enum": ["child", "mother_child", "elderly", "adult_worker", "shop_owner", "foreigner_outsider", "family", "other"]},
+          "hardship_signal": {"type": "string", "enum": ["poverty_hunger", "abandonment_isolation", "business_crisis", "discrimination_humiliation", "illness_bereavement", "accusation_crime", "relationship_breakdown", "none", "other"]},
+          "reversal_device": {"type": "string", "enum": ["hidden_identity", "skill_proof", "object_evidence", "benefactor_return", "institutional_power", "relationship_reveal", "self_action", "unspecified_result", "other"]},
+          "promise_type": {"type": "string", "enum": ["rescue", "dramatic_reversal", "mystery_identity", "skill_success", "business_recovery", "family_rebirth", "social_punishment", "other"]},
+          "outcome_tease": {"type": "string", "enum": ["none", "generic_result", "concrete_future", "reaction_quote", "time_jump", "status_object"]},
+          "numeric_hook": {"type": "string", "enum": ["none", "amount", "age", "time", "count", "multiple"]},
+          "opening_device": {"type": "string", "enum": ["quote", "situation", "identity", "number", "other"]},
+          "specificity_score": {"type": "integer"},
+          "stakes_clarity": {"type": "integer"},
+          "reversal_clarity": {"type": "integer"},
+          "curiosity_strength": {"type": "integer"},
+          "emotional_intensity": {"type": "integer"},
+          "formulaic_risk": {"type": "integer"},
+          "evidence": {"type": "array", "items": {"type": "string"}},
+          "confidence": {"type": "number"},
+          "needs_review": {"type": "boolean"},
+          "review_reason": {"type": "string"}
+        },
+        "required": ["video_id", "protagonist_frame", "hardship_signal", "reversal_device", "promise_type", "outcome_tease", "numeric_hook", "opening_device", "specificity_score", "stakes_clarity", "reversal_clarity", "curiosity_strength", "emotional_intensity", "formulaic_risk", "evidence", "confidence", "needs_review", "review_reason"],
+        "additionalProperties": false
+      }
+    },
+    "batch_confidence": {"type": "number"},
+    "needs_review": {"type": "boolean"},
+    "review_reason": {"type": "string"}
+  },
+  "required": ["batch_id", "items", "batch_confidence", "needs_review", "review_reason"],
+  "additionalProperties": false
+}
