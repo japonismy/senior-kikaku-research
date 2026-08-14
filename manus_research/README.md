@@ -15,6 +15,8 @@
 - `analyze_thumbnail_performance.py`: Manusのサムネイル視覚分類を校正25本の実績へ結合し、P03B・P06B別に集計
 - `classify_titles_batch.py`: タイトル25本の盲検分類と、サムネイルとの一致・補完・食い違い判定を2段階で実行
 - `analyze_title_alignment_performance.py`: タイトル分類・サムネイル整合性・台本構造・YouTube実績を結合して集計
+- `fetch_related_video_sources.py`: 校正25本ごとに関連動画の参照元をYouTube Analyticsから取得し、現在表と履歴表へ保存
+- `analyze_related_video_network.py`: 関連動画総流入・開示参照元・自動画回遊・外部チャンネル橋渡しを台本構造と実績へ結合
 - `import_own_scripts_to_bq.py`: 完成台本・既存分類・校正セットをBigQueryへ接続
 - `manus_pipeline.py`: Manusへ順次送信し、最新ターンのJSONを品質検証して保存
 
@@ -34,6 +36,8 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 & $python .\manus_research\analyze_thumbnail_performance.py
 & $python .\manus_research\classify_titles_batch.py
 & $python .\manus_research\analyze_title_alignment_performance.py
+& $python .\manus_research\fetch_related_video_sources.py
+& $python .\manus_research\analyze_related_video_network.py
 & $python .\manus_research\import_own_scripts_to_bq.py
 ```
 
@@ -77,6 +81,13 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 - `manus_title_calibration_v1`: 校正25本のタイトル分類
 - `manus_title_thumbnail_alignment_v1`: 校正25本のタイトル・サムネイル整合性判定
 - `manus_title_thumbnail_performance_v1`: タイトル・サムネイル整合性と台本・実績の結合表
+- `youtube_related_video_edges_current_v1`: 最新取得分の対象動画→参照元動画エッジ
+- `youtube_related_video_edges_history`: 時点別に追記する関連動画エッジ履歴
+- `youtube_related_target_summary_v1`: 動画別の関連流入比率と開示ネットワーク型
+- `youtube_related_source_centrality_v1`: 参照元動画の送客中心性
+- `youtube_related_external_channels_v1`: 外部参照元チャンネル集計
+- `youtube_related_structure_transitions_v1`: 校正済み自動画間のP型遷移
+- `youtube_related_video_edges_enriched_v1`: 台本・タイトル構造を付与した参照元エッジ
 
 ## 注意
 
@@ -84,3 +95,17 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 - 処理順はキューのpriorityを最優先し、同一priority内で完了数の少ない既存P型・Rカードを優先する。既存分類そのものはManusへ送らない。
 - 再生数、CTR、維持率、既存分類はManusの盲検入力へ入れない。
 - 公開サイト生成処理は `sync_target=self` を対象外のままにし、自チャンネル内部情報を公開しない。
+
+## 重点チャンネルの保全
+
+- `priority_archive_channels.json`: 3時間監視の対象設定。初期対象は「人生は贈り物」。
+- `archive_priority_channels.py`: 公開状態・メタデータ・サムネイル・文字起こしをローカルとBigQueryへ保全する。
+- `run_priority_archive.ps1`: Windowsタスクスケジューラ用の実行・ログ保存ラッパー。
+
+BigQuery出力:
+
+- `priority_channel_videos_current_v1`
+- `priority_channel_video_snapshots_history`
+- `priority_channel_availability_events`
+- `priority_channel_videos_latest_v1`
+- `priority_channel_availability_changes_v1`
