@@ -120,14 +120,27 @@ def find_value(value: Any, key: str) -> Any:
     return None
 
 
-def find_structured_output(value: Any, after_timestamp_ms: int = 0) -> dict[str, Any] | None:
+def output_matches_video_id(output: dict[str, Any], expected_video_id: str = "") -> bool:
+    """Reject delayed results from a previous sendMessage on a reused task."""
+    if not expected_video_id:
+        return True
+    payload = output.get("value") if isinstance(output.get("value"), dict) else output
+    return str(payload.get("video_id") or "") == expected_video_id
+
+
+def find_structured_output(
+    value: Any,
+    after_timestamp_ms: int = 0,
+    expected_video_id: str = "",
+) -> dict[str, Any] | None:
     messages = value.get("messages", []) if isinstance(value, dict) else []
     for message in messages:
         if int(message.get("timestamp") or 0) < after_timestamp_ms:
             continue
         if message.get("type") == "structured_output_result":
             result = message.get("structured_output_result")
-            return result if isinstance(result, dict) else None
+            if isinstance(result, dict) and output_matches_video_id(result, expected_video_id):
+                return result
     return None
 
 
@@ -153,6 +166,7 @@ def find_direct_output(
     required_keys: set[str],
     *,
     require_stopped: bool = True,
+    expected_video_id: str = "",
 ) -> dict[str, Any] | None:
     messages = value.get("messages", []) if isinstance(value, dict) else []
     stopped = any(
@@ -169,7 +183,11 @@ def find_direct_output(
         if message.get("type") != "assistant_message":
             continue
         parsed = extract_json_object((message.get("assistant_message") or {}).get("content") or "")
-        if parsed is not None and required_keys.issubset(parsed):
+        if (
+            parsed is not None
+            and required_keys.issubset(parsed)
+            and output_matches_video_id(parsed, expected_video_id)
+        ):
             return {"success": True, "value": parsed, "error": None}
     return None
 
@@ -573,15 +591,21 @@ def poll_once(limit: int) -> list[dict[str, str]]:
         request_record = json.loads(row.get("request_json") or "{}")
         after_timestamp_ms = int(request_record.get("submitted_after_ms") or 0)
         schema = json.loads(SCHEMAS[row["task_type"]].read_text(encoding="utf-8"))
-        structured = find_direct_output(messages, after_timestamp_ms, set(schema.get("required") or []))
+        structured = find_direct_output(
+            messages,
+            after_timestamp_ms,
+            set(schema.get("required") or []),
+            expected_video_id=row["video_id"],
+        )
         if structured is None:
-            structured = find_structured_output(messages, after_timestamp_ms)
+            structured = find_structured_output(messages, after_timestamp_ms, row["video_id"])
         if structured is None:
             direct_candidate = find_direct_output(
                 messages,
                 after_timestamp_ms,
                 set(schema.get("required") or []),
                 require_stopped=False,
+                expected_video_id=row["video_id"],
             )
             timestamps = [
                 int(message.get("timestamp") or 0)
