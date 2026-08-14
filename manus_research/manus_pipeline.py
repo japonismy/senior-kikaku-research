@@ -25,6 +25,7 @@ PROJECT_ID = "rugged-destiny-408613"
 DATASET = "senior_reading_all"
 BASE_URL = "https://api.manus.ai/v2"
 DEFAULT_ANCHOR_TASK_ID = "eMrKZvhdv3vA9JDFKBEgww"
+DIRECT_OUTPUT_STALL_GRACE_MS = 120_000
 ROOT = Path(__file__).resolve().parent
 SCHEMAS = {
     "classify_story": ROOT / "story_schema_v1.json",
@@ -146,7 +147,13 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
         return None
 
 
-def find_direct_output(value: Any, after_timestamp_ms: int, required_keys: set[str]) -> dict[str, Any] | None:
+def find_direct_output(
+    value: Any,
+    after_timestamp_ms: int,
+    required_keys: set[str],
+    *,
+    require_stopped: bool = True,
+) -> dict[str, Any] | None:
     messages = value.get("messages", []) if isinstance(value, dict) else []
     stopped = any(
         int(message.get("timestamp") or 0) >= after_timestamp_ms
@@ -154,7 +161,7 @@ def find_direct_output(value: Any, after_timestamp_ms: int, required_keys: set[s
         and (message.get("status_update") or {}).get("agent_status") == "stopped"
         for message in messages
     )
-    if not stopped:
+    if require_stopped and not stopped:
         return None
     for message in messages:
         if int(message.get("timestamp") or 0) < after_timestamp_ms:
@@ -259,15 +266,11 @@ title (context only): {title}
 thumbnail_url: {url}
 """
     transcript = row.get("transcript_text") or ""
-    definitions = CLASSIFICATION_DEFINITIONS.read_text(encoding="utf-8")
     return f"""あなたは「人生のレシピ」の長尺感動朗読を構造分類します。
 表面題材ではなく、誰の行動で何が変わるかという因果骨格を分類してください。再生数、CTR、維持率は与えられていません。台本にない出来事を補わないでください。各スコアは0〜10です。evidenceには判定根拠となる出来事を短い日本語で書いてください。
 レポートファイルを作成・添付しないでください。最終回答の本文に、次の全項目名と値を明記してください: video_id, emotional_contract, primary_structure, director_card, rescue_direction, midpoint_mechanism, climax_resolution, ending_reward, food_role, plot_fingerprintの全8項目, similarity_risk_signature, novelty_sources, evidence, hook_strength, midpoint_strength, ending_satisfaction, exchangeability_risk, confidence, needs_review, review_reason。
 0〜10の4スコアとconfidenceを省略しないでください。分析できたのに本文で省略したという理由で0を使わないでください。evidence、repeated_actions、similarity_risk_signature、novelty_sourcesは少なくとも1件書いてください。
-primary_structureとdirector_cardは、次の定義本文を読み、主要事件が条件を満たすものだけを選んでください。名称の印象だけで選ばないでください。特に長期養育がない物語をR3へ分類してはいけません。
-
-CLASSIFICATION_DEFINITIONS:
-{definitions}
+primary_structureとdirector_cardは、添付の classification_definitions_v1.json を読み、主要事件が条件を満たすものだけを選んでください。名称の印象だけで選ばないでください。特に長期養育がない物語をR3へ分類してはいけません。
 
 video_id: {video_id}
 title: {title}
@@ -485,8 +488,11 @@ def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_
             submitted.append({"queue_id": row["queue_id"], "video_id": row["video_id"], "status": "dry_run"})
             continue
         message_content: str | list[dict[str, str]] = prompt
+        definitions_attachment = ""
         if transcript_attachment:
+            definitions_attachment = CLASSIFICATION_DEFINITIONS.read_text(encoding="utf-8")
             encoded = base64.b64encode(transcript_attachment.encode("utf-8")).decode("ascii")
+            definitions_encoded = base64.b64encode(definitions_attachment.encode("utf-8")).decode("ascii")
             message_content = [
                 {"type": "text", "text": prompt},
                 {
@@ -494,6 +500,12 @@ def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_
                     "file_data": f"data:text/plain;base64,{encoded}",
                     "filename": f"{row['video_id']}_transcript.txt",
                     "mime_type": "text/plain",
+                },
+                {
+                    "type": "file",
+                    "file_data": f"data:application/json;base64,{definitions_encoded}",
+                    "filename": CLASSIFICATION_DEFINITIONS.name,
+                    "mime_type": "application/json",
                 },
             ]
         payload = {
@@ -514,6 +526,7 @@ def submit(task_type: str, limit: int, profile: str, dry_run: bool, anchor_task_
             "prompt_hash": prompt_hash,
             "prompt_chars": len(prompt),
             "attachment_chars": len(transcript_attachment),
+            "definitions_attachment_chars": len(definitions_attachment),
             "schema_file": SCHEMAS[task_type].name,
             "submitted_after_ms": submitted_after_ms,
         }
@@ -563,6 +576,27 @@ def poll_once(limit: int) -> list[dict[str, str]]:
         structured = find_direct_output(messages, after_timestamp_ms, set(schema.get("required") or []))
         if structured is None:
             structured = find_structured_output(messages, after_timestamp_ms)
+        if structured is None:
+            direct_candidate = find_direct_output(
+                messages,
+                after_timestamp_ms,
+                set(schema.get("required") or []),
+                require_stopped=False,
+            )
+            timestamps = [
+                int(message.get("timestamp") or 0)
+                for message in messages.get("messages", [])
+                if int(message.get("timestamp") or 0) >= after_timestamp_ms
+            ]
+            newest_timestamp_ms = max(timestamps, default=0)
+            stalled_ms = int(time.time() * 1000) - newest_timestamp_ms if newest_timestamp_ms else 0
+            if direct_candidate is not None and stalled_ms >= DIRECT_OUTPUT_STALL_GRACE_MS:
+                api_request("POST", "task.stop", {"task_id": task_id})
+                messages["_pipeline_recovery"] = {
+                    "reason": "valid_direct_output_stalled_before_task_stop",
+                    "stalled_ms": stalled_ms,
+                }
+                structured = direct_candidate
         if structured is None:
             outcomes.append({"task_id": task_id, "video_id": row["video_id"], "status": "running"})
             continue

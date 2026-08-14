@@ -19,6 +19,8 @@
 - `analyze_related_video_network.py`: 関連動画総流入・開示参照元・自動画回遊・外部チャンネル橋渡しを台本構造と実績へ結合
 - `import_own_scripts_to_bq.py`: 完成台本・既存分類・校正セットをBigQueryへ接続
 - `manus_pipeline.py`: Manusへ順次送信し、最新ターンのJSONを品質検証して保存
+- `manus_autopilot.py`: Freeの同時実行1枠を止めず、全タスク種別からpriority最高の1件を順次処理
+- `fetch_pending_transcripts.py`: Manusを使わずYouTube字幕を取得し、BigQuery・処理キュー・Vaultアーカイブへ反映
 
 ## 実行環境
 
@@ -52,6 +54,30 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 ```
 
 無料個人アカウントでは指定プロファイルがLiteへ降格される可能性があります。保存済みの `agent_profile` は要求値であり、実効モデルを保証しません。
+
+## 自動連続運転
+
+Freeプランは同時実行1件のため、並列送信せず、現在の実行を回収してから次のpriority最高案件を送ります。台本とサムネイルを横断して選ぶため、現在は「人生のレシピ」台本（priority 95）→同サムネイル（90）→競合台本（70）→競合サムネイル（65）の順です。
+
+```powershell
+& $python .\manus_research\manus_autopilot.py --profile manus-1.6
+```
+
+- `manus_research/STOP_MANUS_AUTOPILOT` を作ると、実行中の1件を回収してから停止する。
+- `logs/manus_autopilot_status.json` に現在状態、`logs/manus_autopilot.jsonl` にイベント履歴を保存する。
+- OSロックにより、手動実行とタスクスケジューラの二重起動を拒否する。
+- 一時的なAPIエラーや日次制限は指数バックオフし、BigQueryで `running` の案件を先に回収する。
+- 全必須項目を含む完成JSONの後に2分以上イベントがなく `running` が残る場合は、Structured Output抽出停滞とみなし、タスクを安全停止して本文JSONを回収する。
+
+## 文字起こし欠損の回収
+
+自チャンネルの欠損を先に回収する例:
+
+```powershell
+& $python .\manus_research\fetch_pending_transcripts.py --self-only --limit 20
+```
+
+取得結果はBigQueryへMERGEし、`research_data_coverage` とキューを更新する。根拠字幕は `02_Channels/シニア朗読/analysis/transcript_archive/YYYYMMDD/` にJSON・TXTで保存する。
 
 ## 品質ゲート
 
