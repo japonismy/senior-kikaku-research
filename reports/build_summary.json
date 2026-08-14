@@ -3,9 +3,9 @@
   "project_id": "rugged-destiny-408613",
   "dataset": "senior_reading_all",
   "videos": 3675,
-  "videos_with_thumbnail_text": 1843,
-  "videos_missing_thumbnail_text": 1832,
-  "videos_with_gcs_thumbnail": 2448,
+  "videos_with_thumbnail_text": 1888,
+  "videos_missing_thumbnail_text": 1779,
+  "videos_with_gcs_thumbnail": 2493,
   "transcripts_light": 2459,
   "transcript_digest_chars_per_video": 1600
 }

@@ -65,7 +65,10 @@ def main() -> int:
                 + normalize_tags(override.get("visual_tags", []))
                 + normalize_tags(override.get("search_tags", []))
             )
-        if not item["thumbnail_text"]:
+        ocr_completed_without_text = bool(item.get("thumbnail_ocr", {}).get("analyzed_at")) and not bool(
+            item.get("thumbnail_ocr", {}).get("error")
+        )
+        if not item["thumbnail_text"] and not ocr_completed_without_text:
             missing.append(
                 {
                     "video_id": vid,
