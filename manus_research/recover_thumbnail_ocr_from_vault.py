@@ -89,12 +89,16 @@ def main() -> int:
     if not api_key:
         raise RuntimeError("GEMINI_API_KEYが設定されていません")
     from google import genai
+    from google.genai import types
 
     bq = bigquery.Client(project=PROJECT_ID)
     targets = fetch_targets(bq, args.min_views, args.limit)
     by_id = {target["video_id"]: target for target in targets}
     found = discover_images(Path(args.search_root), set(by_id))
-    genai_client = genai.Client(api_key=api_key)
+    genai_client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=ocr.THUMBNAIL_OCR_TIMEOUT_MS),
+    )
     storage_client = storage.Client(project=PROJECT_ID)
     ocr_rows = []
     asset_rows = []
