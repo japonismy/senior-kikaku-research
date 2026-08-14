@@ -10,6 +10,7 @@
 - `thumbnail_schema_v1.json`: サムネ分類の出力スキーマ
 - `build_calibration_set.py`: 再生実績5分位から校正25本を作成
 - `analyze_calibrated_performance.py`: 人間校正済み分類へYouTube Analyticsとリーチ指標を結合し、構造別実績をCSV・JSON・BigQueryへ保存
+- `analyze_thumbnail_performance.py`: Manusのサムネイル視覚分類を校正25本の実績へ結合し、P03B・P06B別に集計
 - `import_own_scripts_to_bq.py`: 完成台本・既存分類・校正セットをBigQueryへ接続
 - `manus_pipeline.py`: Manusへ順次送信し、最新ターンのJSONを品質検証して保存
 
@@ -26,6 +27,7 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 ```powershell
 & $python .\manus_research\build_calibration_set.py
 & $python .\manus_research\analyze_calibrated_performance.py
+& $python .\manus_research\analyze_thumbnail_performance.py
 & $python .\manus_research\import_own_scripts_to_bq.py
 ```
 
@@ -65,6 +67,7 @@ APIキーはWindowsユーザー環境変数 `MANUS_API_KEY` から読みます�
 - `manus_classification_results`: 正規化済み分類結果
 - `manus_calibration_review_v1`: 既存分類との一致・不一致レビュー
 - `manus_calibration_performance_v1`: 人間校正済み25本と最新の再生・視聴維持・CTR・登録転換を結合した実績表
+- `manus_calibration_thumbnail_performance_v1`: 校正25本のサムネイル視覚分類と実績の結合表
 
 ## 注意
 
