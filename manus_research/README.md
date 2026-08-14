@@ -21,6 +21,7 @@
 - `manus_pipeline.py`: Manusへ順次送信し、最新ターンのJSONを品質検証して保存
 - `manus_autopilot.py`: Freeの同時実行1枠を止めず、全タスク種別からpriority最高の1件を順次処理
 - `fetch_pending_transcripts.py`: Manusを使わずYouTube字幕を取得し、BigQuery・処理キュー・Vaultアーカイブへ反映
+- `sync_thumbnail_text_overrides_to_bq.py`: 既存サムネ文字overrideをBigQuery OCR表へ統合し、再OCRを防止
 
 ## 実行環境
 
